@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="yandex-verification" content="ab8c813c78b54578" />
-<title>Гарант подарков Telegram — безопасные сделки с NFT-подарками за GRAM | Третья Рука</title>
-<meta name="description" content="Гарант для покупки и продажи подарков Telegram (NFT gifts) за GRAM (TON). Деньги хранятся у гаранта, пока покупатель не получит подарок. Витрина подарков, комиссия 4%, оплата видна в блокчейне.">
-<meta name="keywords" content="гарант подарков телеграм, гарант nft подарков, купить подарок телеграм, продать подарок телеграм, гарант сделок telegram gifts, гарант TON, гарант GRAM, nft gifts escrow">
+<title>Обмен и гарант подарков Telegram (NFT) — меняй подарок на подарок | Третья Рука</title>
+<meta name="description" content="Обмен подарков Telegram подарок на подарок через гаранта. Бот сам находит пару для обмена, гарант держит оба подарка, пока обмен не завершится. Комиссия 1 GRAM.">
+<meta name="keywords" content="обмен подарков телеграм, подарки тг, нфт подарки телеграм, гарант подарков телеграм, обменять nft подарок, обмен подарками telegram, поменять подарок телеграм, гарант обмена подарков, биржа обменов nft">
 <link rel="canonical" href="https://payx11.github.io/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Гарант подарков Telegram — Третья Рука">
-<meta property="og:description" content="Покупай и продавай подарки Telegram без риска: деньги у гаранта, пока покупатель не получит подарок.">
+<meta property="og:title" content="Биржа обменов подарков Telegram — Третья Рука">
+<meta property="og:description" content="Меняй подарок на подарок без продажи и потерь на комиссиях маркетов. Бот сам найдёт пару, гарант проведёт обмен.">
 <meta property="og:image" content="https://payx11.github.io/og.jpg">
 <meta property="og:url" content="https://payx11.github.io/">
 <meta name="twitter:card" content="summary_large_image">
@@ -22,123 +22,328 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    {"@type": "Question", "name": "Что такое гарант для сделок с подарками Telegram?",
-     "acceptedAnswer": {"@type": "Answer", "text": "Гарант — посредник, который держит оплату у себя, пока покупатель не получит подарок. Продавец получает деньги только после подтверждения покупателя, поэтому никто не уйдёт с деньгами и без подарка."}},
-    {"@type": "Question", "name": "Сколько стоит сделка через гаранта?",
-     "acceptedAnswer": {"@type": "Answer", "text": "Комиссия гаранта — 4% от суммы сделки, её платит продавец. Покупатель платит ровно цену подарка."}},
-    {"@type": "Question", "name": "В какой валюте проходит оплата?",
-     "acceptedAnswer": {"@type": "Answer", "text": "В GRAM (бывший Toncoin) в сети TON. Перевод идёт на открытый кошелёк гаранта, и его можно проверить в блокчейне."}},
-    {"@type": "Question", "name": "Как продать подарок Telegram через гаранта?",
-     "acceptedAnswer": {"@type": "Answer", "text": "Откройте бота @tretya_ruka_bot, нажмите «Продать», укажите цену, название и кошелёк. Подарок появится на витрине, а когда его купят, гарант проведёт сделку."}},
-    {"@type": "Question", "name": "Как не нарваться на мошенников?",
-     "acceptedAnswer": {"@type": "Answer", "text": "Проверяйте ник бота по буквам — настоящий только @tretya_ruka_bot. Платите только на адрес, который показывает бот. Гарант никогда не пишет первым и не просит перевести деньги на другой адрес."}}
+    {"@type": "Question", "name": "Как обменять подарок Telegram на другой подарок?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Откройте @tretya_ruka_bot → «Обмен подарками» → «Выставить обмен»: укажите, что отдаёте и что хотите. Бот сам найдёт человека со встречным обменом. Оба передают подарки гаранту, гарант отдаёт каждому его новый подарок."}},
+    {"@type": "Question", "name": "Сколько стоит обмен?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Комиссия гаранта — 1 GRAM за обмен. Её платит тот, кто доплачивает, а при обмене без доплаты — тот, кто откликнулся на объявление."}},
+    {"@type": "Question", "name": "Можно ли обменяться с доплатой?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Да. При создании обмена выберите «Я доплачу» или «Хочу доплату» и укажите сумму в GRAM. Доплату держит гарант и переводит её после того, как обе стороны получили подарки."}},
+    {"@type": "Question", "name": "Что если меня обманут?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Подарки идут не друг другу, а гаранту. Гарант раздаёт их только когда получил оба. Если что-то пошло не так — открывается спор, гарант возвращает подарки."}}
   ]
 }
 </script>
 <style>
-:root{--bg:#0b0a08;--bg2:#15130f;--card:#1b1813;--line:rgba(226,181,74,.28);--gold:#e2b54a;--gold2:#ffe9a8;--text:#f4efe4;--muted:#b9b0a0}
+:root{--bg:#0b0a08;--bg2:#15130f;--card:#1b1813;--card2:#221e17;--line:rgba(226,181,74,.28);--line2:rgba(226,181,74,.14);--gold:#e2b54a;--gold2:#ffe9a8;--deep:#a8741a;--text:#f4efe4;--muted:#b9b0a0;--green:#5fd38d;--red:#ff7a6b}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#2a2418 0%,var(--bg) 60%) fixed,var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif}
+html{scroll-behavior:smooth;overflow-x:clip}
+body{margin:0;background:radial-gradient(1100px 620px at 15% -10%,#2b2417 0%,transparent 60%),radial-gradient(900px 600px at 100% 30%,#1f1a10 0%,transparent 55%),var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif;overflow-x:hidden}
 a{color:var(--gold2)}
-.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
-header{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+header{display:flex;align-items:center;justify-content:space-between;padding:18px 0;gap:12px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;text-decoration:none;color:var(--text)}
 .brand img{width:36px;height:36px;border-radius:50%}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:14px 22px;border-radius:999px;font-weight:700;text-decoration:none;transition:transform .15s}
+nav a{color:var(--muted);text-decoration:none;margin-left:18px;font-size:15px}
+nav a:hover{color:var(--gold2)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:15px 24px;border-radius:999px;font-weight:700;text-decoration:none;transition:transform .15s,box-shadow .15s;font-size:16px}
 .btn:hover{transform:translateY(-2px)}
-.btn-gold{background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,#a8741a);color:#1a1408;box-shadow:0 8px 30px rgba(226,181,74,.25)}
+.btn-gold{background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,var(--deep));color:#1a1408;box-shadow:0 10px 34px rgba(226,181,74,.28)}
+.btn-gold:hover{box-shadow:0 14px 44px rgba(226,181,74,.4)}
 .btn-ghost{border:1px solid var(--line);color:var(--gold2)}
-.hero{display:grid;grid-template-columns:1.2fr .8fr;gap:40px;align-items:center;padding:40px 0 70px}
-.kicker{letter-spacing:.2em;font-size:13px;color:var(--gold);font-weight:700}
-h1{font-size:clamp(34px,6vw,58px);line-height:1.05;margin:12px 0 18px}
-h1 span{background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,#a8741a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.kicker{letter-spacing:.2em;font-size:13px;color:var(--gold);font-weight:700;text-transform:uppercase}
+h1{font-size:clamp(36px,6.4vw,64px);line-height:1.03;margin:14px 0 18px;letter-spacing:-.02em}
+h1 span,.g{background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,var(--deep));-webkit-background-clip:text;background-clip:text;color:transparent}
+h2{font-size:clamp(28px,4.2vw,42px);line-height:1.1;margin:0 0 14px;letter-spacing:-.01em}
 .lead{font-size:19px;color:var(--muted);max-width:560px}
 .cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
 .chip{border:1px solid var(--line);background:rgba(226,181,74,.08);color:var(--gold2);padding:6px 14px;border-radius:999px;font-size:14px}
-.shield{width:100%;height:auto;aspect-ratio:1;border-radius:50%;max-width:340px;margin:0 auto;display:block;filter:drop-shadow(0 0 50px rgba(226,181,74,.25));animation:float 4s ease-in-out infinite}
-@keyframes float{50%{transform:translateY(-12px)}}
-section{padding:56px 0;border-top:1px solid rgba(255,255,255,.06)}
-h2{font-size:clamp(26px,4vw,36px);margin:0 0 26px}
-.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
-.num{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--gold);color:#1a1408;font-weight:800;margin-bottom:12px}
-.card h3{margin:0 0 6px;font-size:18px}
-.card p{margin:0;color:var(--muted)}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-.big{font-size:34px;font-weight:800;color:var(--gold2)}
-details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin-bottom:10px}
-summary{cursor:pointer;font-weight:700}
-details p{color:var(--muted);margin:10px 0 0}
-.final{text-align:center}
-.final p{color:var(--muted)}
-footer{padding:30px 0 50px;color:var(--muted);font-size:14px;text-align:center}
-@media (max-width:800px){.hero{grid-template-columns:1fr;padding-top:10px}.shield{max-width:200px;order:-1}.steps,.grid3{grid-template-columns:1fr}header .btn{display:none}}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:36px;align-items:center;padding:36px 0 80px}
+.stage{position:relative;aspect-ratio:1/1;max-width:460px;width:100%;margin:0 auto}
+.ring{position:absolute;inset:8%;border-radius:50%;border:1px dashed var(--line);animation:spin 26s linear infinite}
+.ring.r2{inset:22%;border-style:solid;border-color:var(--line2);animation-duration:40s;animation-direction:reverse}
+.glow{position:absolute;inset:25%;border-radius:50%;background:radial-gradient(circle,rgba(226,181,74,.35),transparent 70%);filter:blur(20px);animation:pulse 4s ease-in-out infinite}
+.gift{position:absolute;width:44%;aspect-ratio:1;border-radius:26px;overflow:hidden;background:var(--card);border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 6px rgba(226,181,74,.05)}
+.gift img{width:100%;height:100%;object-fit:cover;display:block}
+.gift .tag{position:absolute;left:10px;bottom:10px;background:rgba(11,10,8,.75);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--gold2);font-weight:700}
+.gA{left:2%;top:10%;animation:swapA 6s cubic-bezier(.65,0,.35,1) infinite}
+.gB{right:2%;bottom:10%;animation:swapB 6s cubic-bezier(.65,0,.35,1) infinite}
+.mid{position:absolute;left:50%;top:50%;width:84px;height:84px;margin:-42px 0 0 -42px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,var(--deep));color:#1a1408;box-shadow:0 0 0 10px rgba(226,181,74,.12),0 14px 40px rgba(226,181,74,.35);z-index:3}
+.mid svg{width:42px;height:42px;animation:spin 6s cubic-bezier(.65,0,.35,1) infinite}
+.badge{position:absolute;z-index:4;background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:8px 12px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.4);white-space:nowrap}
+.badge b{color:var(--green)}
+.b1{right:0;top:6%;animation:float 5s ease-in-out infinite}
+.b2{left:0;bottom:6%;animation:float 5s ease-in-out infinite 1.2s}
+@keyframes swapA{0%,18%{transform:translate(0,0) rotate(-6deg)}45%,68%{transform:translate(118%,98%) rotate(6deg)}95%,100%{transform:translate(0,0) rotate(-6deg)}}
+@keyframes swapB{0%,18%{transform:translate(0,0) rotate(6deg)}45%,68%{transform:translate(-118%,-98%) rotate(-6deg)}95%,100%{transform:translate(0,0) rotate(6deg)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.6;transform:scale(.95)}50%{opacity:1;transform:scale(1.05)}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
+/* sections */
+section{padding:70px 0}
+.sub{color:var(--muted);max-width:640px;margin:0 0 34px;font-size:18px}
+.center{text-align:center}.center .sub{margin-left:auto;margin-right:auto}
+.problem{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.pcard{border-radius:22px;padding:26px;border:1px solid var(--line2);background:var(--card)}
+.pcard h3{margin:0 0 12px;font-size:20px}
+.pcard.bad{background:linear-gradient(180deg,rgba(255,122,107,.07),transparent),var(--card)}
+.pcard.good{border-color:var(--line);background:linear-gradient(180deg,rgba(226,181,74,.12),transparent),var(--card)}
+.flow{display:flex;flex-direction:column;gap:10px}
+.fstep{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.03);border-radius:14px;padding:12px 14px;font-size:15px}
+.fstep .ic{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;font-size:18px;background:rgba(255,255,255,.05)}
+.minus{color:var(--red);font-weight:700;margin-left:auto;white-space:nowrap}
+.plus{color:var(--green);font-weight:700;margin-left:auto;white-space:nowrap}
+.total{margin-top:14px;padding-top:14px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;font-weight:700;font-size:18px}
+
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;counter-reset:s}
+.step{position:relative;border-radius:22px;padding:26px 22px;background:var(--card);border:1px solid var(--line2);transition:border-color .2s,transform .2s}
+.step:hover{border-color:var(--line);transform:translateY(-4px)}
+.step::before{counter-increment:s;content:counter(s);position:absolute;right:18px;top:12px;font-size:54px;font-weight:800;line-height:1;color:rgba(226,181,74,.12)}
+.step .em{font-size:30px}
+.step h3{margin:10px 0 6px;font-size:18px}
+.step p{margin:0;color:var(--muted);font-size:15px}
+
+/* calculator */
+.calc{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center;border-radius:28px;padding:34px;border:1px solid var(--line);background:radial-gradient(600px 300px at 0% 0%,rgba(226,181,74,.12),transparent 70%),var(--card)}
+.calc label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}
+.inp{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:6px 16px}
+.inp input{flex:1;background:none;border:0;color:var(--text);font-size:32px;font-weight:800;width:100%;outline:none;padding:6px 0}
+.inp span{color:var(--gold);font-weight:700}
+input[type=range]{width:100%;margin-top:16px;accent-color:var(--gold)}
+.res{display:grid;gap:10px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.03)}
+.row.us{background:linear-gradient(90deg,rgba(226,181,74,.18),rgba(226,181,74,.05));border:1px solid var(--line)}
+.row b{font-size:18px}
+.save{margin-top:6px;text-align:center;font-size:15px;color:var(--muted)}
+.save strong{color:var(--green);font-size:22px}
+
+/* compare table */
+.tbl{width:100%;border-collapse:separate;border-spacing:0;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:var(--card)}
+.tbl th,.tbl td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--line2);font-size:15px}
+.tbl th{color:var(--muted);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.08em;background:var(--bg2)}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr.us td{background:rgba(226,181,74,.1);font-weight:700}
+.y{color:var(--green)}.n{color:var(--red)}
+.note{color:var(--muted);font-size:13px;margin-top:10px}
+
+/* safety */
+.safe{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.sc{border-radius:22px;padding:24px;background:var(--card);border:1px solid var(--line2)}
+.sc .em{font-size:28px}.sc h3{margin:8px 0 6px;font-size:18px}.sc p{margin:0;color:var(--muted);font-size:15px}
+
+/* faq */
+details{border:1px solid var(--line2);background:var(--card);border-radius:18px;padding:18px 22px;margin-bottom:12px}
+details[open]{border-color:var(--line)}
+summary{cursor:pointer;font-weight:700;font-size:17px;list-style:none;display:flex;justify-content:space-between;gap:12px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--gold);font-size:22px;line-height:1;transition:transform .2s}
+details[open] summary::after{transform:rotate(45deg)}
+details p{color:var(--muted);margin:12px 0 0}
+
+.final{border-radius:32px;padding:56px 30px;text-align:center;border:1px solid var(--line);background:radial-gradient(700px 300px at 50% 0%,rgba(226,181,74,.22),transparent 70%),var(--card)}
+footer{padding:40px 0 50px;color:var(--muted);font-size:14px;text-align:center}
+footer a{color:var(--muted)}
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s ease}
+.reveal.on{opacity:1;transform:none}
+
+@media (max-width:860px){
+  .hero{grid-template-columns:1fr;padding-top:10px;gap:10px}
+  .stage{max-width:360px;order:-1}
+  .problem,.calc{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr 1fr}
+  .safe{grid-template-columns:1fr}
+  nav a:not(.btn){display:none}
+  .calc{padding:22px}
+  .tbl th:nth-child(3),.tbl td:nth-child(3){display:none}
+}
+@media (max-width:520px){
+  .steps{grid-template-columns:1fr}
+  .badge{font-size:12px}
+  .wrap{padding:0 16px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <a class="brand" href="#"><img src="logo.png" alt="Третья Рука — гарант подарков" width="36" height="36">Третья Рука | Гарант</a>
-    <span style="display:flex;gap:10px;align-items:center"><a href="obmen/" style="color:var(--gold2);text-decoration:none;font-weight:700">🔄 Обмен</a><a class="btn btn-gold" href="https://t.me/tretya_ruka_bot">Открыть бота</a></span>
+    <a class="brand" href="./"><img src="logo.png" alt="Третья Рука">Третья Рука</a>
+    <nav>
+      <a href="#how">Как работает</a>
+      <a href="#calc">Выгода</a>
+      <a href="#faq">Вопросы</a>
+      <a href="garant/">🛡 Гарант сделок</a>
+    </nav>
   </header>
 
-  <main>
-    <div class="hero">
-      <div>
-        <div class="kicker">ГАРАНТ ПОДАРКОВ TELEGRAM</div>
-        <h1>Покупай и продавай подарки Telegram <span>без риска</span></h1>
-        <p class="lead">Гарант-бот для сделок с NFT-подарками за GRAM. Деньги хранятся у гаранта, пока покупатель не получит подарок — никто не уйдёт с деньгами и без подарка.</p>
-        <div class="cta">
-          <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot">🛍 Открыть витрину подарков</a>
-          <a class="btn btn-ghost" href="obmen/">🔄 Обмен подарками</a>
-        </div>
-        <div class="chips">
-          <span class="chip">💎 Комиссия 4%</span>
-          <span class="chip">⚡ Оплата в GRAM (TON)</span>
-          <span class="chip">🔍 Оплата видна в блокчейне</span>
-        </div>
+  <div class="hero">
+    <div>
+      <div class="kicker">Биржа обменов · Telegram</div>
+      <h1>Меняй подарок <span>на подарок</span></h1>
+      <p class="lead">Без продажи, без потерь на комиссиях маркетов и без риска. Бот сам найдёт того, у кого есть нужный тебе подарок, а гарант проведёт обмен.</p>
+      <div class="cta">
+        <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot?start=obmen">🔄 Выставить обмен</a>
+        <a class="btn btn-ghost" href="garant/">🛡 Купить / продать через гаранта</a>
       </div>
-      <img class="shield" src="logo.png" alt="Щит с подарком — символ гаранта" width="340" height="340">
+      <div class="chips">
+        <span class="chip">🤖 Автоподбор пары</span>
+        <span class="chip">🛡 Через гаранта</span>
+        <span class="chip">💰 Можно с доплатой</span>
+        <span class="chip">1 GRAM за обмен</span>
+      </div>
     </div>
-
-    <section id="how">
-      <h2>Как проходит сделка</h2>
-      <div class="steps">
-        <div class="card"><div class="num">1</div><h3>Продавец создаёт сделку</h3><p>Указывает цену и подарок — или выставляет его на витрину бота.</p></div>
-        <div class="card"><div class="num">2</div><h3>Покупатель платит гаранту</h3><p>Оплата в GRAM на кошелёк гаранта, а не продавцу. Бот сам видит перевод.</p></div>
-        <div class="card"><div class="num">3</div><h3>Продавец отправляет подарок</h3><p>Как только оплата подтверждена, бот говорит продавцу отправлять.</p></div>
-        <div class="card"><div class="num">4</div><h3>Покупатель подтверждает</h3><p>И только тогда гарант переводит деньги продавцу.</p></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>Почему Третья Рука</h2>
-      <div class="grid3">
-        <div class="card"><div class="big">🛍</div><h3>Витрина подарков</h3><p>Листай подарки с картинками, рейтингом продавца и ссылкой на проверку подарка. Покупка — в одно нажатие.</p></div>
-        <div class="card"><div class="big">🔍</div><h3>Прозрачно</h3><p>Оплата идёт на открытый кошелёк в сети TON — каждый перевод можно проверить. Никаких «балансов внутри бота».</p></div>
-        <div class="card"><div class="big">⭐</div><h3>Честные отзывы</h3><p>После каждой сделки покупатель и продавец ставят оценку. Рейтинг продавца виден на витрине.</p></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>Вопросы и ответы</h2>
-      <details><summary>Что такое гарант для сделок с подарками Telegram?</summary><p>Посредник, который держит оплату у себя, пока покупатель не получит подарок. Продавец получает деньги только после подтверждения покупателя.</p></details>
-      <details><summary>Сколько стоит сделка?</summary><p>Комиссия — 4% от суммы, её платит продавец. Покупатель платит ровно цену подарка.</p></details>
-      <details><summary>В какой валюте оплата?</summary><p>В GRAM (бывший Toncoin) в сети TON. Перевод идёт на открытый кошелёк гаранта и виден в блокчейне.</p></details>
-      <details><summary>Как продать подарок?</summary><p>Откройте <a href="https://t.me/tretya_ruka_bot">@tretya_ruka_bot</a>, нажмите «🛒 Продать», укажите цену, название и кошелёк. Пришлите ссылку на подарок — бот сам поставит его картинку на витрину.</p></details>
-      <details><summary>Как не нарваться на мошенников?</summary><p>Настоящий бот — только @tretya_ruka_bot, проверяйте ник по буквам. Платите только на адрес, который показывает бот. Гарант никогда не пишет первым и не просит перевести деньги на другой адрес.</p></details>
-    </section>
-
-    <section class="final">
-      <h2>Готов к безопасной сделке?</h2>
-      <p>Открой бота — витрина подарков и гарант в одном месте.</p>
-      <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot">Открыть @tretya_ruka_bot</a>
-    </section>
-  </main>
-
-  <footer>© Третья Рука | Гарант подарков Telegram · <a href="https://t.me/tretya_ruka_bot">@tretya_ruka_bot</a></footer>
+    <div class="stage" aria-hidden="true">
+      <div class="glow"></div>
+      <div class="ring"></div><div class="ring r2"></div>
+      <div class="gift gA"><img src="https://nft.fragment.com/gift/plushpepe-1.large.jpg" alt="" loading="eager"><span class="tag">Plush Pepe</span></div>
+      <div class="gift gB"><img src="https://nft.fragment.com/gift/durovscap-1.large.jpg" alt="" loading="eager"><span class="tag">Durov's Cap</span></div>
+      <div class="mid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></div>
+      <div class="badge b1">🔥 Нашлась пара!</div>
+      <div class="badge b2">Обмен завершён <b>✓</b></div>
+    </div>
+  </div>
 </div>
+
+<section class="reveal">
+  <div class="wrap">
+    <div class="kicker">Зачем это нужно</div>
+    <h2>Маркеты не умеют <span class="g">меняться</span></h2>
+    <p class="sub">На Portals, Tonnel, MRKT и Getgems подарок можно только продать и купить. Чтобы «поменяться», ты платишь комиссию дважды и ещё ловишь курс.</p>
+    <div class="problem">
+      <div class="pcard bad">
+        <h3>😩 Как меняются сейчас</h3>
+        <div class="flow">
+          <div class="fstep"><span class="ic">🏷</span>Выставляешь свой подарок на маркет<span class="minus">−6–10%</span></div>
+          <div class="fstep"><span class="ic">⏳</span>Ждёшь, пока купят, цена падает</div>
+          <div class="fstep"><span class="ic">🛒</span>Покупаешь нужный по цене продавца</div>
+          <div class="fstep"><span class="ic">💬</span>Или ищешь в чатах и рискуешь нарваться на кидалу<span class="minus">риск</span></div>
+        </div>
+        <div class="total"><span>Итог</span><span class="n">теряешь до 10–20%</span></div>
+      </div>
+      <div class="pcard good">
+        <h3>😎 Как меняются у нас</h3>
+        <div class="flow">
+          <div class="fstep"><span class="ic">📤</span>Пишешь: отдаю Pepe, хочу Cap</div>
+          <div class="fstep"><span class="ic">🤖</span>Бот сам находит человека со встречным обменом<span class="plus">авто</span></div>
+          <div class="fstep"><span class="ic">🛡</span>Оба передаёте подарки гаранту</div>
+          <div class="fstep"><span class="ic">🎁</span>Гарант отдаёт каждому его новый подарок</div>
+        </div>
+        <div class="total"><span>Итог</span><span class="y">1 GRAM за весь обмен</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="reveal">
+  <div class="wrap">
+    <div class="kicker">Как это работает</div>
+    <h2>Четыре шага — и подарок у тебя</h2>
+    <p class="sub">Всё внутри Telegram-бота @tretya_ruka_bot. Никаких сайтов с кошельками и подключений.</p>
+    <div class="steps">
+      <div class="step"><div class="em">📝</div><h3>Выставь обмен</h3><p>Что отдаёшь, что хочешь взамен. Можно с доплатой в любую сторону.</p></div>
+      <div class="step"><div class="em">🔍</div><h3>Бот ищет пару</h3><p>Как только появится встречное предложение — вам обоим придёт «Нашлась пара!».</p></div>
+      <div class="step"><div class="em">🛡</div><h3>Подарки — гаранту</h3><p>Оба передаёте подарки аккаунту гаранта. Доплату — на кошелёк гаранта с кодом обмена.</p></div>
+      <div class="step"><div class="em">🎉</div><h3>Получи новый</h3><p>Гарант отдаёт подарки крест-накрест, вы подтверждаете, доплата уходит получателю.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="calc" class="reveal">
+  <div class="wrap">
+    <div class="calc">
+      <div>
+        <div class="kicker">Посчитай выгоду</div>
+        <h2>Сколько ты сохранишь</h2>
+        <label for="v">Сколько стоит твой подарок</label>
+        <div class="inp"><input id="v" type="number" min="1" max="100000" value="150" inputmode="decimal"><span>GRAM</span></div>
+        <input id="r" type="range" min="5" max="2000" step="5" value="150" aria-label="Стоимость подарка">
+      </div>
+      <div class="res">
+        <div class="row"><span>Продать и купить на Tonnel / MRKT</span><b class="n" id="m1">−24 GRAM</b></div>
+        <div class="row"><span>Продать и купить на Portals / Fragment</span><b class="n" id="m2">−15 GRAM</b></div>
+        <div class="row us"><span>🔄 Обмен через Третью Руку</span><b class="y">−1 GRAM</b></div>
+        <div class="save">Ты сохраняешь до <strong id="sv">23 GRAM</strong></div>
+      </div>
+    </div>
+    <p class="note">Расчёт примерный: комиссия маркета берётся с продажи твоего подарка и заложена в цену того, что покупаешь (Tonnel/MRKT ≈ 8%, Portals/Fragment ≈ 5% с каждой стороны). Ставки маркетов меняются — проверяй у них.</p>
+  </div>
+</section>
+
+<section class="reveal">
+  <div class="wrap">
+    <div class="kicker">Сравнение</div>
+    <h2>Где можно поменяться</h2>
+    <table class="tbl">
+      <tr><th>Где</th><th>Обмен подарок на подарок</th><th>Поиск пары</th><th>Комиссия</th></tr>
+      <tr class="us"><td>🔄 Третья Рука</td><td class="y">Да, через гаранта</td><td class="y">Автоматически</td><td>1 GRAM</td></tr>
+      <tr><td>Portals, MRKT, Tonnel</td><td class="n">Нет, только продажа</td><td class="n">—</td><td>5–10% с продажи</td></tr>
+      <tr><td>Fragment, Getgems</td><td class="n">Нет, только продажа</td><td class="n">—</td><td>2–5% + проверка личности</td></tr>
+      <tr><td>Чаты обменов</td><td>Да, на доверии</td><td class="n">Вручную</td><td class="n">риск кидка</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="reveal">
+  <div class="wrap">
+    <div class="kicker">Безопасность</div>
+    <h2>Почему тебя не кинут</h2>
+    <div class="safe" style="margin-top:26px">
+      <div class="sc"><div class="em">🤝</div><h3>Подарки идут гаранту</h3><p>Не друг другу. Гарант раздаёт их, только когда получил оба.</p></div>
+      <div class="sc"><div class="em">🔒</div><h3>Доплата на открытом кошельке</h3><p>Перевод на кошелёк гаранта с кодом обмена — его видно в блокчейне TON.</p></div>
+      <div class="sc"><div class="em">⚖️</div><h3>Спор — решает гарант</h3><p>Что-то не так? Кнопка «Проблема» — гарант разберётся и вернёт подарки.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" class="reveal">
+  <div class="wrap" style="max-width:820px">
+    <div class="kicker">Вопросы</div>
+    <h2>Частые вопросы</h2>
+    <details><summary>Как обменять подарок Telegram на другой?</summary><p>Открой @tretya_ruka_bot → «🔄 Обмен подарками» → «Выставить обмен». Укажи, что отдаёшь (ссылку t.me/nft/… или название) и что хочешь. Бот сам найдёт встречный обмен или ты можешь выбрать из списка.</p></details>
+    <details><summary>Сколько стоит обмен?</summary><p>1 GRAM за весь обмен. Платит тот, кто доплачивает, а если обмен без доплаты — тот, кто откликнулся на объявление.</p></details>
+    <details><summary>Можно поменяться с доплатой?</summary><p>Да. Выбери «Я доплачу» или «Хочу доплату» и укажи сумму в GRAM. Доплату держит гарант и переводит её, когда обе стороны получили подарки.</p></details>
+    <details><summary>А если нужного подарка ни у кого нет?</summary><p>Объявление висит 7 дней. Как только кто-то выставит встречный обмен, бот сразу сообщит вам обоим. Ссылкой на своё объявление можно поделиться в чатах.</p></details>
+    <details><summary>Что будет, если что-то пойдёт не так?</summary><p>Пока гарант не получил оба подарка, обмен можно отменить. После — открывается спор, и гарант возвращает подарки владельцам.</p></details>
+  </div>
+</section>
+
+<section class="reveal">
+  <div class="wrap">
+    <div class="final">
+      <div class="kicker">Попробуй</div>
+      <h2>Есть подарок, который надоел?</h2>
+      <p class="sub" style="margin:0 auto 26px">Выставь обмен за минуту — возможно, пара для тебя уже ждёт.</p>
+      <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot?start=obmen">🔄 Открыть биржу обменов</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Третья Рука · <a href="garant/">Гарант сделок с подарками Telegram</a> · <a href="https://t.me/tretya_ruka_bot">@tretya_ruka_bot</a><br>Настоящий бот — только @tretya_ruka_bot. Проверяй ник по буквам.</div>
+</footer>
+
+<script>
+(function(){
+  var v=document.getElementById('v'),r=document.getElementById('r');
+  function f(x){return (Math.round(x*10)/10).toString().replace(/\.0$/,'')+' GRAM'}
+  function calc(src){
+    var x=parseFloat((src||v).value)||0; if(x<0)x=0;
+    if(src===r)v.value=x; else r.value=Math.min(2000,x);
+    var a=x*0.08*2,b=x*0.05*2;
+    document.getElementById('m1').textContent='−'+f(a);
+    document.getElementById('m2').textContent='−'+f(b);
+    document.getElementById('sv').textContent=f(Math.max(0,a-1));
+  }
+  v.addEventListener('input',function(){calc(v)});r.addEventListener('input',function(){calc(r)});calc(v);
+  var els=document.querySelectorAll('.reveal');
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}})},{threshold:.12});
+    els.forEach(function(e){io.observe(e)});
+  } else els.forEach(function(e){e.classList.add('on')});
+})();
+</script>
 </body>
 </html>
