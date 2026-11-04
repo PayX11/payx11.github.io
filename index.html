@@ -106,24 +106,6 @@ section{padding:70px 0}
 .step h3{margin:10px 0 6px;font-size:18px}
 .step p{margin:0;color:var(--muted);font-size:15px}
 
-.vit{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;border-radius:28px;padding:34px;border:1px solid var(--line2);background:radial-gradient(600px 300px at 100% 0%,rgba(226,181,74,.1),transparent 70%),var(--card)}
-.shelf{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.item{position:relative;border-radius:20px;overflow:hidden;border:1px solid var(--line);aspect-ratio:1;box-shadow:0 14px 40px rgba(0,0,0,.45);transition:transform .25s}
-.item:hover{transform:translateY(-4px) rotate(-1deg)}
-.item img{width:100%;height:100%;object-fit:cover;display:block}
-.item span{position:absolute;left:8px;bottom:8px;background:rgba(11,10,8,.75);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--gold2);font-weight:700}
-@media (max-width:860px){.vit{grid-template-columns:1fr;padding:22px}}
-.vgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:22px}
-.vcard{display:flex;flex-direction:column;border-radius:22px;overflow:hidden;border:1px solid var(--line2);background:var(--card);text-decoration:none;color:var(--text);transition:transform .2s,border-color .2s}
-.vcard:hover{transform:translateY(-4px);border-color:var(--line)}
-.vimg{aspect-ratio:1;background:radial-gradient(circle at 50% 40%,#3a3020,#15130f);display:grid;place-items:center;font-size:56px;overflow:hidden}
-.vimg img{width:100%;height:100%;object-fit:cover;display:block}
-.vbody{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1}
-.vname{font-weight:700;font-size:16px;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.vprice{font-size:20px;font-weight:800;color:var(--gold2)}
-.vbadge{font-size:13px;color:var(--muted)}
-.vbuy{margin-top:auto;text-align:center;padding:10px;border-radius:999px;font-weight:700;font-size:15px;background:linear-gradient(180deg,var(--gold2),var(--gold) 55%,var(--deep));color:#1a1408}
-@media (max-width:860px){.vgrid{grid-template-columns:1fr 1fr;gap:12px}.vbody{padding:10px 12px 12px}.vprice{font-size:17px}.vname{font-size:14px}}
 /* calculator */
 .calc{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center;border-radius:28px;padding:34px;border:1px solid var(--line);background:radial-gradient(600px 300px at 0% 0%,rgba(226,181,74,.12),transparent 70%),var(--card)}
 .calc label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}
@@ -191,7 +173,7 @@ footer a{color:var(--muted)}
     <a class="brand" href="./"><img src="logo.png" alt="Третья Рука">Третья Рука</a>
     <nav>
       <a href="#how">Как работает</a>
-      <a href="#vitrina">🛍 Витрина</a>
+      <a href="https://t.me/tretya_ruka_bot?start=vitrina">🛍 Витрина</a>
       <a href="stati/">Статьи</a>
       <a href="garant/">🛡 Гарант сделок</a>
     </nav>
@@ -204,7 +186,7 @@ footer a{color:var(--muted)}
       <p class="lead">Без продажи, без потерь на комиссиях маркетов и без риска. Бот сам найдёт того, у кого есть нужный тебе подарок, а гарант проведёт обмен.</p>
       <div class="cta">
         <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot?start=obmen">🔄 Выставить обмен</a>
-        <a class="btn btn-ghost" href="garant/">🛡 Купить / продать через гаранта</a>
+        <a class="btn btn-ghost" href="https://t.me/tretya_ruka_bot?start=vitrina">🛍 Витрина подарков</a>
       </div>
       <div class="chips">
         <span class="chip">🤖 Автоподбор пары</span>
@@ -266,32 +248,6 @@ footer a{color:var(--muted)}
       <div class="step"><div class="em">🛡</div><h3>Подарки — гаранту</h3><p>Оба передаёте подарки аккаунту гаранта. Доплату — на кошелёк гаранта с кодом обмена.</p></div>
       <div class="step"><div class="em">🎉</div><h3>Получи новый</h3><p>Гарант отдаёт подарки крест-накрест, вы подтверждаете, доплата уходит получателю.</p></div>
     </div>
-  </div>
-</section>
-
-<section id="vitrina" class="reveal">
-  <div class="wrap">
-    <div class="vit">
-      <div>
-        <div class="kicker">Витрина подарков</div>
-        <h2>Не хочешь меняться? <span class="g">Купи или продай</span></h2>
-        <div id="vitcount" class="chip" style="display:inline-block;margin:-4px 0 14px" hidden></div>
-        <p class="sub" style="margin-bottom:22px">На витрине бота — подарки от продавцов с рейтингом. Каждая покупка идёт через гаранта: деньги у гаранта, пока подарок не придёт к тебе.</p>
-        <div class="cta" style="margin-top:0">
-          <a class="btn btn-gold" href="https://t.me/tretya_ruka_bot?start=vitrina">🛍 Открыть витрину</a>
-          <a class="btn btn-ghost" href="https://t.me/tretya_ruka_bot?start=vitrina">🛒 Выставить свой подарок</a>
-        </div>
-        <div class="chips"><span class="chip">⭐ Рейтинг продавцов</span><span class="chip">🛡 Через гаранта</span><span class="chip">Комиссия 4%</span></div>
-      </div>
-      <div class="shelf" id="shelf" aria-hidden="true">
-        <div class="item"><img src="https://nft.fragment.com/gift/signetring-1.large.jpg" alt="" loading="lazy"><span>Signet Ring</span></div>
-        <div class="item"><img src="https://nft.fragment.com/gift/lootbag-1.large.jpg" alt="" loading="lazy"><span>Loot Bag</span></div>
-        <div class="item"><img src="https://nft.fragment.com/gift/heartlocket-1.large.jpg" alt="" loading="lazy"><span>Heart Locket</span></div>
-        <div class="item"><img src="https://nft.fragment.com/gift/preciouspeach-1.large.jpg" alt="" loading="lazy"><span>Precious Peach</span></div>
-      </div>
-    </div>
-    <div id="vitlist" class="vgrid" hidden></div>
-    <div id="vitmore" class="center" hidden style="margin-top:18px"><button class="btn btn-ghost" type="button" style="background:none;cursor:pointer;font:inherit;font-weight:700">Показать все подарки</button></div>
   </div>
 </section>
 
@@ -383,22 +339,6 @@ footer a{color:var(--muted)}
   }
   v.addEventListener('input',function(){calc(v)});r.addEventListener('input',function(){calc(r)});calc(v);
 
-  // витрина: настоящие подарки из бота (бот обновляет vitrina/data.json)
-  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-  function fp(x){return (Math.round(x*100)/100).toString()}
-  fetch('vitrina/data.json',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(function(d){
-    if(!d||!d.items||!d.items.length)return;
-    var list=document.getElementById('vitlist'),more=document.getElementById('vitmore'),cnt=document.getElementById('vitcount');
-    cnt.textContent='🟢 Сейчас на витрине: '+d.items.length;cnt.hidden=false;
-    document.getElementById('shelf').style.display='none';
-    document.querySelector('.vit').style.gridTemplateColumns='1fr';
-    list.innerHTML=d.items.map(function(it,i){
-      var img=it.img?'<img src="'+esc(it.img)+'" alt="'+esc(it.desc)+'" loading="lazy" onerror="this.remove()">':'';
-      return '<a class="vcard'+(i>=8?' xtra':'')+'" href="'+esc(it.link)+'"'+(i>=8?' hidden':'')+'><div class="vimg">🎁'.replace('🎁',img?'':'🎁')+img+'</div><div class="vbody"><div class="vname">'+esc(it.desc)+'</div><div class="vprice">'+fp(it.price)+' '+esc(it.currency)+'</div><div class="vbadge">'+esc(it.badge)+'</div><div class="vbuy">Купить через гаранта</div></div></a>';
-    }).join('');
-    list.hidden=false;
-    if(d.items.length>8){more.hidden=false;more.querySelector('button').onclick=function(){list.querySelectorAll('.xtra').forEach(function(e){e.hidden=false});more.hidden=true}}
-  }).catch(function(){});
   var els=document.querySelectorAll('.reveal');
   if('IntersectionObserver' in window){
     var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('on');io.unobserve(e.target)}})},{threshold:.12});
