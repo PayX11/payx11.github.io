@@ -60,7 +60,7 @@ namespace SnowDesk
     class Flake { public double X, Y, R, Vy, Phase, Amp, Depth, Rot, RotSpeed, Vx; public bool Crystal; }
     class Chunk { public double X, Y, Vx, Vy, R, Life; }
     class Spark { public double X, Y, Vx, Vy, Life, Max; }
-    class Cap { public double L, T, R; public double[] H; public bool Seen; }
+    class Cap { public double L, T, R; public double[] H; public bool Seen; public List<Geometry> Geo; public int Age; }
 
     // снеговик или стопка снежков: R — радиусы снизу вверх
     class Man
@@ -284,7 +284,7 @@ namespace SnowDesk
         int tick, frames, fps;
         DateTime last = DateTime.Now, fpsAt = DateTime.Now;
         public double ToolShowUntil;
-        Geometry clip;
+        Geometry clip; List<Rect> holes = new List<Rect>(), holesNext;
 
         // снежок, который катают курсором
         Man rolling; double rollRot;
@@ -410,11 +410,13 @@ namespace SnowDesk
         }
 
         // ---------- шаг симуляции ----------
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew(); double lastT, stepMs;
         public void Step()
         {
             DateTime now = DateTime.Now;
-            double dt = Math.Min(0.1, (now - last).TotalSeconds);
-            last = now;
+            double tnow = clock.Elapsed.TotalSeconds;
+            double dt = Math.Min(0.1, tnow - lastT);
+            lastT = tnow;
             if (S.Paused) return;
             time += dt; Clock.Now = time;
             tick++;
@@ -451,6 +453,7 @@ namespace SnowDesk
             StepSanta(dt);
 
             frames++;
+            stepMs = stepMs * 0.9 + (clock.Elapsed.TotalSeconds - tnow) * 1000 * 0.1;
             if ((now - fpsAt).TotalSeconds >= 1) { fps = frames; frames = 0; fpsAt = now; }
             Front.V.InvalidateVisual();
         }
@@ -837,7 +840,7 @@ namespace SnowDesk
         {
             foreach (Cap c in caps.Values) c.Seen = false;
             List<Native.RECT> above = new List<Native.RECT>();
-            Geometry mask = new RectangleGeometry(new Rect(0, 0, Width, Height));
+            holesNext = new List<Rect>();
             Native.EnumWindows(delegate (IntPtr h, IntPtr p)
             {
                 if (h == Front.Hwnd || !Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
@@ -849,7 +852,7 @@ namespace SnowDesk
                 if (Native.DwmGetWindowAttribute(h, 9, out r, 16) != 0) Native.GetWindowRect(h, out r);
                 if ((Native.GetWindowLong(h, -20) & 0x20) != 0) return true;   // прозрачные оверлеи других программ не считаем
                 if (r.R > r.L && r.B > r.T && Native.GetWindowTextLength(h) > 0)
-                    mask = Geometry.Combine(mask, new RectangleGeometry(new Rect(r.L / Scale, r.T / Scale, (r.R - r.L) / Scale, (r.B - r.T) / Scale)), GeometryCombineMode.Exclude, null);
+                    holesNext.Add(new Rect(r.L / Scale, r.T / Scale, (r.R - r.L) / Scale, (r.B - r.T) / Scale));
                 if (!S.Windows) { above.Add(r); return true; }
                 if (r.R - r.L < 160 * Scale || r.B - r.T < 80 * Scale || Native.GetWindowTextLength(h) == 0) { above.Add(r); return true; }
                 double L = r.L / Scale, T = r.T / Scale, R = r.R / Scale;
@@ -875,8 +878,7 @@ namespace SnowDesk
                 above.Add(r);
                 return true;
             }, IntPtr.Zero);
-            mask.Freeze();
-            clip = mask;
+            holes = holesNext; clip = RectangleGeometry.Empty;
             List<IntPtr> gone = new List<IntPtr>();
             foreach (KeyValuePair<IntPtr, Cap> kv in caps) if (!kv.Value.Seen) gone.Add(kv.Key);
             foreach (IntPtr h in gone) { Crumble(caps[h]); DropMen(h); caps.Remove(h); }
@@ -949,11 +951,10 @@ namespace SnowDesk
         {
             if (hidden) return;
             bool masked = !S.Over && clip != null;
-            if (masked) dc.PushClip(clip);
+            if (glowSprite == null) MakeSprites();
             if (S.Garland) DrawGarland(dc);
-            if (masked) foreach (Flake f in flakes) DrawFlake(dc, f);
+            if (masked) { List<Rect> hs = holes; foreach (Flake f in flakes) if (!Hidden(hs, f.X, f.Y)) DrawFlake(dc, f); }
             else foreach (Flake f in flakes) if (f.Depth < 0.45) DrawFlake(dc, f);
-            if (masked) dc.Pop();
             if (!double.IsNaN(santaX)) art.DrawSanta(dc, santaX, santaY + Math.Sin(time * 2) * 7, time);
             foreach (Cap c in caps.Values) DrawCap(dc, c);
             DrawGround(dc);
@@ -965,7 +966,7 @@ namespace SnowDesk
             foreach (Spark s in sparks)
             {
                 double a = Math.Max(0, Math.Min(1, s.Life)), r = s.Max * (0.6 + 0.6 * Math.Abs(Math.Sin(s.Life * 9)));
-                dc.PushOpacity(a); dc.DrawEllipse(dust, null, new Point(s.X, s.Y), r * 2.2, r * 2.2); dc.Pop();
+                if (a > 0.02) dc.DrawImage(dustLv[Math.Min(LV - 1, (int)(a * LV))], new Rect(s.X - r * 2.2, s.Y - r * 2.2, r * 4.4, r * 4.4));
             }
             if (!masked) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
             if (S.Fps)
@@ -973,7 +974,7 @@ namespace SnowDesk
                 string[] tools = { "ничего", "варежка", "снежок", "лопата" };
                 IntPtr dA; double dSy, dH;
                 bool dNear = NearSurface(mx, my, out dA, out dSy, out dH);
-                string info = "FPS " + fps + (S.Compat ? " (совм.)" : "") + "  окон " + caps.Count + "  курсор: " + tools[S.Tool]
+                string info = "FPS " + fps + (S.Compat ? " (надёжн.)" : " (быстр.)") + "  расчёт " + stepMs.ToString("0.0") + "мс" + "  окон " + caps.Count + "  курсор: " + tools[S.Tool]
                     + "  у снега: " + (dNear ? "да, " + Math.Round(dH) + "px" : "нет") + "  кнопка: " + ((Native.GetAsyncKeyState(0x01) & 0x8000) != 0 ? "зажата" : "-")
                     + "  шар: " + (rolling == null ? "-" : Math.Round(rolling.R[0]).ToString()) + "  снеговиков: " + men.Count;
                 FormattedText ft = new FormattedText(info, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White, Scale);
@@ -994,9 +995,38 @@ namespace SnowDesk
             }
         }
 
-        ImageSource[] glowSprite; ImageSource crystalSprite;
+        static bool Hidden(List<Rect> hs, double x, double y)
+        {
+            for (int i = 0; i < hs.Count; i++) { Rect q = hs[i]; if (x > q.Left && x < q.Right && y > q.Top && y < q.Bottom) return true; }
+            return false;
+        }
+
+        // всё полупрозрачное — заранее готовые картинки: «слой прозрачности» на каждую мелочь сильно тормозит WPF
+        ImageSource[] glowSprite, crystalLv, dustLv; ImageSource crystalSprite; ImageSource[,] bulbLv;
+        const int LV = 8;
+        static ImageSource Bake(int size, Action<DrawingContext> draw)
+        {
+            DrawingVisual v = new DrawingVisual();
+            using (DrawingContext d = v.RenderOpen()) draw(d);
+            System.Windows.Media.Imaging.RenderTargetBitmap b = new System.Windows.Media.Imaging.RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            b.Render(v); b.Freeze(); return b;
+        }
         void MakeSprites()
         {
+            dustLv = new ImageSource[LV];
+            for (int i = 0; i < LV; i++) { double a = (i + 1.0) / LV; dustLv[i] = Bake(32, delegate (DrawingContext d) { d.PushOpacity(a); d.DrawEllipse(dust, null, new Point(16, 16), 16, 16); d.Pop(); }); }
+            if (bulbHalo == null) MakeBulbs();
+            bulbLv = new ImageSource[BulbColors.Length, LV];
+            for (int c = 0; c < BulbColors.Length; c++)
+                for (int i = 0; i < LV; i++)
+                {
+                    double pulse = i / (LV - 1.0); int cc = c;
+                    bulbLv[c, i] = Bake(32, delegate (DrawingContext d)
+                    {
+                        d.PushOpacity(0.25 + 0.75 * pulse); d.DrawEllipse(bulbHalo[cc], null, new Point(16, 16), 14, 14); d.Pop();
+                        d.PushOpacity(0.6 + 0.4 * pulse); d.DrawEllipse(bulbCore[cc], null, new Point(16, 16), 3.6, 5.2); d.Pop();
+                    });
+                }
             glowSprite = new ImageSource[glow.Length];
             for (int i = 0; i < glow.Length; i++)
             {
@@ -1015,6 +1045,8 @@ namespace SnowDesk
             }
             System.Windows.Media.Imaging.RenderTargetBitmap cb = new System.Windows.Media.Imaging.RenderTargetBitmap(64, 64, 96, 96, PixelFormats.Pbgra32);
             cb.Render(cv); cb.Freeze(); crystalSprite = cb;
+            crystalLv = new ImageSource[4];
+            for (int i = 0; i < 4; i++) { double a = 0.55 + 0.45 * (i + 0.5) / 4; ImageSource src = cb; crystalLv[i] = Bake(64, delegate (DrawingContext d) { d.PushOpacity(a); d.DrawImage(src, new Rect(0, 0, 64, 64)); d.Pop(); }); }
         }
 
         void DrawFlake(DrawingContext dc, Flake f)
@@ -1024,9 +1056,8 @@ namespace SnowDesk
             {
                 double s2 = f.R * 1.07;
                 dc.PushTransform(new RotateTransform(f.Rot, f.X, f.Y));
-                dc.PushOpacity(0.55 + f.Depth * 0.45);
-                dc.DrawImage(crystalSprite, new Rect(f.X - s2, f.Y - s2, s2 * 2, s2 * 2));
-                dc.Pop(); dc.Pop();
+                dc.DrawImage(crystalLv[Math.Min(3, (int)(f.Depth * 4))], new Rect(f.X - s2, f.Y - s2, s2 * 2, s2 * 2));
+                dc.Pop();
             }
             else
             {
@@ -1055,7 +1086,18 @@ namespace SnowDesk
             }
         }
 
+        Geometry groundGeo; int groundAge;
         void DrawGround(DrawingContext dc)
+        {
+            if (groundGeo == null || ++groundAge >= 3) { groundAge = 0; groundGeo = BuildGround(); }
+            dc.DrawGeometry(snowFill, snowEdge, groundGeo);
+            for (int i = 3; i < ground.Length; i += 9)
+            {
+                if (ground[i] < 4) continue;
+                if (Math.Sin(time * 3 + i * 1.7) > 0.85) dc.DrawImage(glowSprite[5], new Rect(i * COL - 3.7, groundY - ground[i] + 4 - 3.7, 7.4, 7.4));
+            }
+        }
+        Geometry BuildGround()
         {
             StreamGeometry g = new StreamGeometry();
             using (StreamGeometryContext c = g.Open())
@@ -1065,16 +1107,17 @@ namespace SnowDesk
                 c.LineTo(new Point(Width, groundY + 2), true, false);
             }
             g.Freeze();
-            dc.DrawGeometry(snowFill, snowEdge, g);
-            for (int i = 3; i < ground.Length; i += 9)
-            {
-                if (ground[i] < 4) continue;
-                if (Math.Sin(time * 3 + i * 1.7) > 0.85) dc.DrawEllipse(glow[5], null, new Point(i * COL, groundY - ground[i] + 4), 2.2, 2.2);
-            }
+            return g;
         }
 
         void DrawCap(DrawingContext dc, Cap c)
         {
+            if (c.Geo == null || ++c.Age >= 3) { c.Age = 0; c.Geo = BuildCap(c); }
+            foreach (Geometry g in c.Geo) dc.DrawGeometry(capFill, snowEdge, g);
+        }
+        List<Geometry> BuildCap(Cap c)
+        {
+            List<Geometry> res = new List<Geometry>();
             int i = 0;
             while (i < c.H.Length)
             {
@@ -1089,8 +1132,9 @@ namespace SnowDesk
                     k.LineTo(new Point(c.L + (i - 1) * COL, c.T + 1), true, false);
                 }
                 g.Freeze();
-                dc.DrawGeometry(capFill, snowEdge, g);
+                res.Add(g);
             }
+            return res;
         }
 
         double BaseY(Man m)
@@ -1172,11 +1216,12 @@ namespace SnowDesk
                 ys[i] = y;
                 y -= rs[i] * 0.82;
             }
-            dc.PushOpacity(1 - Math.Min(1, m.Melt));
+            bool fade = m.Melt > 0;
+            if (fade) dc.PushOpacity(1 - Math.Min(1, m.Melt));
             dc.DrawEllipse(ballShadow, null, new Point(m.X, ys[0] + rs[0] * 0.92), rs[0] * 1.05, rs[0] * 0.22);
             bool decor = m.Decorated;
             double pop = decor ? Ease(Clamp((time - m.DecorateAt) / 0.5)) : 0;
-            if (decor) { dc.PushOpacity(pop); DrawArms(dc, m, ys, rs); dc.Pop(); }
+            if (decor) { if (pop < 1) dc.PushOpacity(pop); DrawArms(dc, m, ys, rs); if (pop < 1) dc.Pop(); }
             for (int i = 0; i < n; i++)
             {
                 double pr = m.Born < 0 ? 1 : Clamp((age - (i == 0 ? 0 : i == 1 ? 0.8 : 1.4)) / (i == 0 ? 0.8 : 0.6));
@@ -1184,8 +1229,8 @@ namespace SnowDesk
                 double ox = i == 0 ? -(1 - Ease(pr)) * 140 : 0, oy = i == 0 ? 0 : -(1 - Ease(pr)) * 70;
                 DrawBall(dc, m.X + ox, ys[i] + oy, rs[i] * (i == 0 ? Ease(pr) : Math.Max(0.3, Ease(pr))), 0);
             }
-            if (decor) { dc.PushOpacity(pop); DrawDecor(dc, m, ys, rs); dc.Pop(); }
-            dc.Pop();
+            if (decor) { if (pop < 1) dc.PushOpacity(pop); DrawDecor(dc, m, ys, rs); if (pop < 1) dc.Pop(); }
+            if (fade) dc.Pop();
         }
 
         void Branch(DrawingContext dc, Pen pen, double sx, double sy, double deg, double len, int flip, double s)
@@ -1346,7 +1391,39 @@ namespace SnowDesk
         Brush[] bulbHalo, bulbCore; Pen wirePen;
         void DrawGarland(DrawingContext dc)
         {
-            if (bulbHalo == null)
+            if (bulbHalo == null) MakeBulbs();
+            int n = (int)(Width / 70) + 1;
+            if (wireGeo == null)
+            {
+                wireGeo = new Geometry[n];
+                for (int i = 0; i < n; i++)
+                {
+                    StreamGeometry g = new StreamGeometry();
+                    using (StreamGeometryContext c = g.Open())
+                    {
+                        c.BeginFigure(new Point(i * 70, 2), false, false);
+                        c.QuadraticBezierTo(new Point(i * 70 + 35, 26), new Point(i * 70 + 70, 2), true, true);
+                    }
+                    g.Freeze(); wireGeo[i] = g;
+                }
+            }
+            List<Rect> hs = S.Over ? new List<Rect>() : holes;
+            for (int i = 0; i < n && i < wireGeo.Length; i++)
+            {
+                if (Hidden(hs, i * 70 + 35, 12)) continue;   // за окном гирлянду не видно
+                dc.DrawGeometry(null, wirePen, wireGeo[i]);
+                for (int k = 1; k <= 3; k++)
+                {
+                    double t = k / 4.0, bx = i * 70 + t * 70, by = 2 * (1 - t) * (1 - t) + 2 * (1 - t) * t * 26 + t * t * 2;
+                    double pulse = 0.5 + 0.5 * Math.Sin(time * 2.4 + i * 1.3 + k * 2.1);
+                    int ci = (i * 3 + k) % BulbColors.Length;
+                    dc.DrawImage(bulbLv[ci, Math.Min(LV - 1, (int)(pulse * LV))], new Rect(bx - 16, by + 7 - 16, 32, 32));
+                }
+            }
+        }
+        Geometry[] wireGeo;
+        void MakeBulbs()
+        {
             {
                 bulbHalo = new Brush[BulbColors.Length]; bulbCore = new Brush[BulbColors.Length];
                 for (int i = 0; i < BulbColors.Length; i++)
@@ -1357,6 +1434,9 @@ namespace SnowDesk
                 }
                 wirePen = new Pen(new SolidColorBrush(Color.FromArgb(200, 30, 60, 30)), 1.6); wirePen.Freeze();
             }
+        }
+        void OldGarland(DrawingContext dc)
+        {
             int n = (int)(Width / 70) + 1;
             StreamGeometry g = new StreamGeometry();
             using (StreamGeometryContext c = g.Open())
@@ -1953,12 +2033,12 @@ namespace SnowDesk
 
             w.Front.Show();
             // плавно: шаг на каждый кадр экрана
-            DateTime lastFrame = DateTime.Now;
-            CompositionTarget.Rendering += delegate
+            TimeSpan lastRender = TimeSpan.Zero;
+            CompositionTarget.Rendering += delegate (object o, EventArgs e)
             {
-                DateTime now = DateTime.Now;
-                if (S.Compat && (now - lastFrame).TotalMilliseconds < 31) return;
-                lastFrame = now;
+                // событие бывает несколько раз за кадр — шагаем ровно один раз на кадр экрана
+                RenderingEventArgs re = e as RenderingEventArgs;
+                if (re != null) { if (re.RenderingTime == lastRender) return; lastRender = re.RenderingTime; }
                 try { w.Step(); } catch (Exception ex) { Log(ex); }
             };
             if (S.Tips)
@@ -1987,4 +2067,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 7 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
+Write-Host 'Готово! Версия 8 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
