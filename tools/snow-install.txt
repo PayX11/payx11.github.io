@@ -46,6 +46,9 @@ namespace SnowDesk
         [DllImport("dwmapi.dll")] public static extern int DwmExtendFrameIntoClientArea(IntPtr h, ref MARGINS m);
         [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
         [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+        [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+        [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+        [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
         [StructLayout(LayoutKind.Sequential)] public struct MARGINS { public int L, R, T, B; }
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
@@ -153,7 +156,6 @@ namespace SnowDesk
                 KeepZ();
                 HwndSource.FromHwnd(Hwnd).AddHook(delegate (IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled)
                 {
-                    if (msg == 0x0084) { handled = true; return new IntPtr(-1); }   // WM_NCHITTEST → «меня тут нет»
                     if (msg == 0x0312 && wp.ToInt32() == 7) { handled = true; Program.Quit(); }   // Ctrl+Alt+Q
                     return IntPtr.Zero;
                 });
@@ -207,7 +209,7 @@ namespace SnowDesk
         Geometry clip;
 
         // снежок, который катают курсором
-        Man rolling; double rollRot, rollStill, rollCooldown;
+        Man rolling; double rollRot;
 
         Brush[] glow = new Brush[6];
         Brush dust, snowFill, capFill, coal, carrot, stick;
@@ -486,43 +488,58 @@ namespace SnowDesk
             return false;
         }
 
-        // снежок: курсор над сугробом — катаем шар, остановился на секунду — шар ставится
+        // снежок как во Flake: зажми левую кнопку на сугробе и веди — шар катится и растёт;
+        // отпусти — шар встанет. Шар можно взять и перенести на другой — будет снеговик.
+        bool wasDown; bool carrying;
         void Snowball(double dt, double mdx)
         {
-            rollCooldown -= dt;
-            if (rolling == null)
-            {
-                if (rollCooldown > 0 || Math.Abs(mdx) < 0.8) return;
-                IntPtr anchor; double sy, h;
-                if (!NearSurface(mx, my, out anchor, out sy, out h) || h < 2) return;
-                rolling = new Man { X = mx, Anchor = anchor };
-                rolling.R.Add(5);
-                rollStill = 0;
-                return;
-            }
+            bool down = (Native.GetAsyncKeyState(0x01) & 0x8000) != 0;
+            if (down && !wasDown) StartBall();
+            wasDown = down;
+            if (rolling == null) return;
+            if (!down) { PlaceBall(); return; }
             double r = rolling.R[0];
-            double surf = SurfaceY(rolling.Anchor, mx);
-            bool lost = Math.Abs(my - (surf - r)) > 70 + r || (rolling.Anchor != IntPtr.Zero && !caps.ContainsKey(rolling.Anchor));
-            if (rolling.Anchor != IntPtr.Zero)
-            {
-                Cap c;
-                if (caps.TryGetValue(rolling.Anchor, out c) && (mx < c.L || mx > c.R)) lost = true;
-            }
-            if (lost) { PlaceBall(); return; }
+            IntPtr anchor; double sy, h;
+            bool onSnow = NearSurface(mx, my + r * 0.5, out anchor, out sy, out h) && my > sy - r * 2.2 - 30;
             double dx = mx - rolling.X;
             rolling.X = mx;
-            rollRot += dx / Math.Max(4, r) * 57.3;
-            if (Math.Abs(dx) > 0.3)
+            if (onSnow)
             {
-                rollStill = 0;
-                double got = Dig(rolling.Anchor, mx, r, Math.Abs(dx) * 0.12);
-                rolling.R[0] = Math.Min(42, r + got * 0.09 + Math.Abs(dx) * 0.01);
+                carrying = false;
+                rolling.Anchor = anchor;
+                rollRot += dx / Math.Max(4, r) * 57.3;
+                if (Math.Abs(dx) > 0.3)
+                {
+                    double got = Dig(anchor, mx, r, Math.Abs(dx) * 0.12);
+                    rolling.R[0] = Math.Min(44, r + got * 0.09 + Math.Abs(dx) * 0.012);
+                }
             }
-            else
+            else carrying = true;   // шар подняли — несём его в руке
+        }
+
+        void StartBall()
+        {
+            // взять уже стоящий шар (верхний в стопке)
+            for (int i = men.Count - 1; i >= 0; i--)
             {
-                rollStill += dt;
-                if (rollStill > 0.8) PlaceBall();
+                Man m = men[i];
+                if (m.Melt > 0 || !double.IsNaN(m.FallY)) continue;
+                double topR = m.R[m.R.Count - 1], cy = TopY(m) + topR;
+                if ((mx - m.X) * (mx - m.X) + (my - cy) * (my - cy) < topR * topR * 1.3)
+                {
+                    rolling = new Man { X = m.X, Anchor = m.Anchor };
+                    rolling.R.Add(topR);
+                    m.R.RemoveAt(m.R.Count - 1);
+                    if (m.R.Count == 0) men.RemoveAt(i); else m.DecorateAt = double.MaxValue;
+                    carrying = true;
+                    return;
+                }
             }
+            IntPtr anchor; double sy, h;
+            if (!NearSurface(mx, my, out anchor, out sy, out h)) return;
+            rolling = new Man { X = mx, Anchor = anchor };
+            rolling.R.Add(6);
+            carrying = false;
         }
 
         double Dig(IntPtr anchor, double x, double r, double amount)
@@ -559,29 +576,35 @@ namespace SnowDesk
 
         void PlaceBall()
         {
-            Man b = rolling; rolling = null; rollCooldown = 0.6;
+            Man b = rolling; rolling = null; carrying = false;
             double r = b.R[0];
-            if (r < 8) { Puff(b.X, SurfaceY(b.Anchor, b.X) - r, 6); return; }
-            // ставим на другой шар, если он под курсором
+            if (r < 7) { Puff(b.X, my, 6); return; }
             Man best = null;
             foreach (Man m in men)
             {
-                if (m.Melt > 0 || !double.IsNaN(m.FallY) || m.Anchor != b.Anchor || m.R.Count >= 3) continue;
-                if (Math.Abs(m.X - b.X) < m.R[m.R.Count - 1] + r * 0.5) best = m;
+                if (m.Melt > 0 || !double.IsNaN(m.FallY) || m.R.Count >= 3) continue;
+                if (Math.Abs(m.X - b.X) < m.R[m.R.Count - 1] + r * 0.6 && Math.Abs(my - TopY(m)) < 140) best = m;
             }
             if (best != null)
             {
                 best.R.Add(Math.Min(r, best.R[best.R.Count - 1] * 1.05));
-                best.DecorateAt = best.R.Count >= 3 ? time + 0.15 : time + 2.2;
+                best.DecorateAt = best.R.Count >= 3 ? time + 0.15 : time + 1.6;
                 best.WaveAt = time + 1;
-                Sparkle(best.X, TopY(best), 14);
+                Sparkle(best.X, TopY(best), 16);
+                return;
             }
-            else
+            b.Hat = rnd.Next(HatColors.Length + 1); b.Scarf = rnd.Next(ScarfColors.Length);
+            // роняем на поверхность под курсором
+            b.Anchor = IntPtr.Zero;
+            double surf = SurfaceY(IntPtr.Zero, b.X);
+            if (my < surf - r * 2) { b.FallY = my + r; b.FallV = 0; }
+            foreach (KeyValuePair<IntPtr, Cap> kv in caps)
             {
-                b.Hat = rnd.Next(HatColors.Length + 1); b.Scarf = rnd.Next(ScarfColors.Length);
-                men.Add(b);
-                if (men.Count > 12) men.RemoveAt(0);
+                Cap c = kv.Value;
+                if (b.X > c.L && b.X < c.R && CapAt(c, b.X) >= 0 && Math.Abs(my + r - (c.T - CapAt(c, b.X))) < r * 1.5) { b.Anchor = kv.Key; b.FallY = double.NaN; break; }
             }
+            men.Add(b);
+            if (men.Count > 14) men.RemoveAt(0);
         }
 
         void Puff(double x, double y, int n)
@@ -649,7 +672,14 @@ namespace SnowDesk
                 Man m = men[i];
                 if (!double.IsNaN(m.FallY))   // окно ушло — снеговик падает вниз
                 {
-                    m.FallV += 900 * dt; m.FallY += m.FallV * dt;
+                    m.FallV += 900 * dt; double before = m.FallY; m.FallY += m.FallV * dt;
+                    bool landed = false;
+                    foreach (KeyValuePair<IntPtr, Cap> kv in caps)
+                    {
+                        Cap c = kv.Value; double ch = CapAt(c, m.X);
+                        if (m.X > c.L && m.X < c.R && ch >= 0 && before <= c.T - ch && m.FallY >= c.T - ch) { m.Anchor = kv.Key; m.FallY = double.NaN; m.FallV = 0; landed = true; break; }
+                    }
+                    if (landed) continue;
                     double g = groundY - GroundAt(m.X);
                     if (m.FallY >= g) { m.FallY = double.NaN; m.FallV = 0; m.Anchor = IntPtr.Zero; Puff(m.X, g, 8); }
                     continue;
@@ -699,12 +729,27 @@ namespace SnowDesk
                 hidden = full;
                 Front.Visibility = full ? Visibility.Hidden : Visibility.Visible;
             }
-            if (!full) { Front.KeepZ(); ScanWindows(); }
+            if (!full) { Front.KeepZ(); ScanWindows(); CheckClickThrough(); }
             if ((!S.Windows || full) && caps.Count > 0) DropAllCaps();
             if (S.Tips && S.Tool == 2 && !tipSnowball && Tip != null)
             {
                 tipSnowball = true;
-                Tip("Снежок: медленно веди курсор над сугробом — шар катится и растёт. Остановись на секунду — шар встанет. Скати ещё один и останови над первым — получится снеговик ⛄");
+                Tip("Снежок: зажми левую кнопку на сугробе и веди — шар катится и растёт. Отпусти — шар встанет. Зажми на шаре и перенеси его на другой шар — получится снеговик ⛄");
+            }
+        }
+
+        int blockedCount;
+        void CheckClickThrough()
+        {
+            Native.POINT p;
+            if (!Native.GetCursorPos(out p)) return;
+            IntPtr h = Native.WindowFromPoint(p);
+            if (h != IntPtr.Zero && Native.GetAncestor(h, 2) == Front.Hwnd) blockedCount++; else blockedCount = 0;
+            if (blockedCount >= 2)
+            {
+                blockedCount = 0;
+                if (!S.Compat) { S.Compat = true; S.Save(); Program.Restart(); }
+                else { S.Paused = true; Front.Visibility = Visibility.Hidden; if (Tip != null) Tip("Снег мешал нажимать на окна — я его приостановил. Включи снова в панели (Пауза)."); }
             }
         }
 
@@ -835,7 +880,7 @@ namespace SnowDesk
             foreach (Cap c in caps.Values) DrawCap(dc, c);
             DrawGround(dc);
             foreach (Man m in men) DrawMan(dc, m);
-            if (rolling != null) DrawBall(dc, rolling.X, SurfaceY(rolling.Anchor, rolling.X) - rolling.R[0] * 0.85, rolling.R[0], rollRot);
+            if (rolling != null) DrawBall(dc, rolling.X, carrying ? my : SurfaceY(rolling.Anchor, rolling.X) - rolling.R[0] * 0.85, rolling.R[0], carrying ? 0.0001 : rollRot);
             if (!double.IsNaN(tractorX)) art.DrawTruck(dc, tractorX, groundY, time, plowPile);
             foreach (Chunk c in chunks) dc.DrawEllipse(glow[5], null, new Point(c.X, c.Y), c.R * 1.6, c.R * 1.6);
             foreach (Spark s in sparks)
@@ -926,15 +971,66 @@ namespace SnowDesk
             return SurfaceY(m.Anchor, m.X) + Math.Min(6, m.R[0] * 0.2);
         }
 
-        double TopY(Man m)
+        double TopY(Man m)  // верх верхнего шара — та же раскладка, что в DrawMan
         {
-            double y = BaseY(m);
-            for (int i = 0; i < m.R.Count; i++) y -= m.R[i] * (i == 0 ? 1.6 : 1.55);
-            return y;
+            double y = BaseY(m), c = y;
+            for (int i = 0; i < m.R.Count; i++) { y -= m.R[i] * (i == 0 ? 0.95 : 0.82); c = y; y -= m.R[i] * 0.82; }
+            return c - m.R[m.R.Count - 1];
+        }
+
+        // ---------- снеговик (дизайн проверен картинкой: art/man.py) ----------
+        Brush ballFill, ballShadow, ballHi, coalHi, blushB, carrotLine, carrotHi;
+        Pen ballArcPen;
+        void ManBrushes()
+        {
+            if (ballFill != null) return;
+            RadialGradientBrush b = new RadialGradientBrush();
+            b.Center = new Point(0.40, 0.35); b.GradientOrigin = new Point(0.40, 0.35); b.RadiusX = b.RadiusY = 0.75;
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(255, 255, 255), 0));
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(241, 246, 252), 0.55));
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(211, 225, 242), 0.85));
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(183, 203, 230), 1));
+            b.Freeze(); ballFill = b;
+            RadialGradientBrush sh = new RadialGradientBrush(Color.FromArgb(90, 91, 123, 176), Color.FromArgb(0, 91, 123, 176)); sh.Freeze(); ballShadow = sh;
+            ballHi = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)); ballHi.Freeze();
+            coalHi = new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)); coalHi.Freeze();
+            blushB = new SolidColorBrush(Color.FromArgb(115, 255, 143, 163)); blushB.Freeze();
+            carrotLine = new SolidColorBrush(Color.FromRgb(194, 94, 0)); carrotLine.Freeze();
+            carrotHi = new SolidColorBrush(Color.FromArgb(200, 255, 179, 71)); carrotHi.Freeze();
+            ballArcPen = new Pen(new SolidColorBrush(Color.FromArgb(90, 159, 182, 216)), 1); ballArcPen.Freeze();
+        }
+
+        void DrawBall(DrawingContext dc, double x, double y, double r, double rot)
+        {
+            if (r < 0.5) return;
+            ManBrushes();
+            dc.DrawEllipse(ballFill, null, new Point(x, y), r, r);
+            // нижняя тень-дуга и блик
+            Pen arc = new Pen(ballArcPen.Brush, r * 0.08);
+            StreamGeometry g = new StreamGeometry();
+            using (StreamGeometryContext c = g.Open())
+            {
+                c.BeginFigure(new Point(x - r * 0.62, y + r * 0.55), false, false);
+                c.ArcTo(new Point(x + r * 0.75, y + r * 0.48), new Size(r, r), 0, false, SweepDirection.Counterclockwise, true, false);
+            }
+            dc.DrawGeometry(null, arc, g);
+            dc.PushTransform(new RotateTransform(-30, x - r * 0.38, y - r * 0.42));
+            dc.DrawEllipse(ballHi, null, new Point(x - r * 0.38, y - r * 0.42), r * 0.22, r * 0.13);
+            dc.Pop();
+            if (rot != 0)  // крошки снега на катящемся шаре — видно, что он вертится
+            {
+                Brush tex = new SolidColorBrush(Color.FromArgb(70, 160, 185, 220));
+                for (int k = 0; k < 5; k++)
+                {
+                    double a = (rot + k * 72) * Math.PI / 180, d = r * (0.35 + 0.1 * (k % 3));
+                    dc.DrawEllipse(tex, null, new Point(x + Math.Cos(a) * d, y + Math.Sin(a) * d), r * 0.08, r * 0.06);
+                }
+            }
         }
 
         void DrawMan(DrawingContext dc, Man m)
         {
+            ManBrushes();
             double age = time - m.Born;
             double baseY = BaseY(m);
             double shrink = 1 - Math.Min(1, m.Melt) * 0.9;
@@ -944,124 +1040,178 @@ namespace SnowDesk
             for (int i = 0; i < n; i++)
             {
                 rs[i] = m.R[i] * shrink;
-                y -= rs[i] * (i == 0 ? 0.95 : 0.8);
+                y -= rs[i] * (i == 0 ? 0.95 : 0.82);
                 ys[i] = y;
-                y -= rs[i] * 0.8;
+                y -= rs[i] * 0.82;
             }
             dc.PushOpacity(1 - Math.Min(1, m.Melt));
+            dc.DrawEllipse(ballShadow, null, new Point(m.X, ys[0] + rs[0] * 0.92), rs[0] * 1.05, rs[0] * 0.22);
+            bool decor = m.Decorated;
+            double pop = decor ? Ease(Clamp((time - m.DecorateAt) / 0.5)) : 0;
+            if (decor) { dc.PushOpacity(pop); DrawArms(dc, m, ys, rs); dc.Pop(); }
             for (int i = 0; i < n; i++)
             {
                 double pr = m.Born < 0 ? 1 : Clamp((age - (i == 0 ? 0 : i == 1 ? 0.8 : 1.4)) / (i == 0 ? 0.8 : 0.6));
                 if (pr <= 0) continue;
                 double ox = i == 0 ? -(1 - Ease(pr)) * 140 : 0, oy = i == 0 ? 0 : -(1 - Ease(pr)) * 70;
-                DrawBall(dc, m.X + ox, ys[i] + oy, rs[i] * (i == 0 ? Ease(pr) : Math.Max(0.3, Ease(pr))), m.X * 3);
+                DrawBall(dc, m.X + ox, ys[i] + oy, rs[i] * (i == 0 ? Ease(pr) : Math.Max(0.3, Ease(pr))), 0);
             }
-            if (m.Decorated)
-            {
-                double pop = Ease(Clamp((time - m.DecorateAt) / 0.5));
-                dc.PushOpacity(pop);
-                DrawDecor(dc, m, ys, rs);
-                dc.Pop();
-            }
+            if (decor) { dc.PushOpacity(pop); DrawDecor(dc, m, ys, rs); dc.Pop(); }
             dc.Pop();
+        }
+
+        void Branch(DrawingContext dc, Pen pen, double sx, double sy, double deg, double len, int flip, double s)
+        {
+            double a = deg * Math.PI / 180;
+            double ex = sx + Math.Cos(a) * len, ey = sy + Math.Sin(a) * len;
+            StreamGeometry g = new StreamGeometry();
+            using (StreamGeometryContext c = g.Open())
+            {
+                c.BeginFigure(new Point(sx, sy), false, false);
+                c.QuadraticBezierTo(new Point((sx + ex) / 2, (sy + ey) / 2 - 3 * s), new Point(ex, ey), true, true);
+                double mx1 = sx + Math.Cos(a) * len * 0.62, my1 = sy + Math.Sin(a) * len * 0.62, b1 = a + flip * 0.75;
+                c.BeginFigure(new Point(mx1, my1), false, false);
+                c.LineTo(new Point(mx1 + Math.Cos(b1) * len * 0.28, my1 + Math.Sin(b1) * len * 0.28), true, true);
+                double mx2 = sx + Math.Cos(a) * len * 0.85, my2 = sy + Math.Sin(a) * len * 0.85, b2 = a - flip * 0.6;
+                c.BeginFigure(new Point(mx2, my2), false, false);
+                c.LineTo(new Point(mx2 + Math.Cos(b2) * len * 0.18, my2 + Math.Sin(b2) * len * 0.18), true, true);
+            }
+            dc.DrawGeometry(null, pen, g);
+        }
+
+        void DrawArms(DrawingContext dc, Man m, double[] ys, double[] rs)
+        {
+            int n = rs.Length;
+            double br = rs[n - 2], by = ys[n - 2], s = rs[n - 1] / 16.0;
+            Pen pen = new Pen(stick, 2.6 * s); pen.StartLineCap = pen.EndLineCap = PenLineCap.Round; pen.LineJoin = PenLineJoin.Round;
+            double ay = by - br * 0.25;
+            double wave = time > m.WaveAt && time - m.WaveAt < 2 ? Math.Sin((time - m.WaveAt) * 12) * 28 : 0;
+            Branch(dc, pen, m.X - br * 0.85, ay, 205, br * 1.25, -1, s);
+            Branch(dc, pen, m.X + br * 0.85, ay, -35 + wave, br * 1.25, 1, s);
         }
 
         void DrawDecor(DrawingContext dc, Man m, double[] ys, double[] rs)
         {
             int n = rs.Length;
-            double hx = m.X, hy = ys[n - 1], hr = rs[n - 1];
-            double by = ys[n - 2], br = rs[n - 2];
-            double s = hr / 15.0;
-            // руки-веточки, правая машет
-            Pen arm = new Pen(stick, 2.6 * s); arm.StartLineCap = arm.EndLineCap = PenLineCap.Round;
-            double ay = by - br * 0.15;
-            dc.DrawLine(arm, new Point(m.X - br * 0.8, ay), new Point(m.X - br * 1.9, ay - br * 0.65));
-            dc.DrawLine(arm, new Point(m.X - br * 1.55, ay - br * 0.45), new Point(m.X - br * 1.7, ay - br * 0.9));
-            double wave = (time - m.WaveAt) < 2 && time > m.WaveAt ? Math.Sin((time - m.WaveAt) * 12) * 0.5 : 0;
-            double ang = -0.6 + wave;
-            Point sh = new Point(m.X + br * 0.8, ay);
-            Point hand = new Point(sh.X + Math.Cos(ang) * br * 1.3, sh.Y + Math.Sin(ang) * br * 1.3);
-            dc.DrawLine(arm, sh, hand);
-            Point twig = new Point(sh.X + Math.Cos(ang) * br * 0.9, sh.Y + Math.Sin(ang) * br * 0.9);
-            dc.DrawLine(arm, twig, new Point(twig.X + Math.Cos(ang - 0.8) * br * 0.35, twig.Y + Math.Sin(ang - 0.8) * br * 0.35));
-            // пуговицы
-            for (int k = 0; k < 3; k++) dc.DrawEllipse(coal, null, new Point(m.X, by - br * 0.45 + k * br * 0.42), 1.9 * s, 1.9 * s);
-            // лицо: глаза с бликом, улыбка из угольков, морковка, румянец
-            dc.DrawEllipse(coal, null, new Point(hx - hr * 0.36, hy - hr * 0.2), 2.2 * s, 2.4 * s);
-            dc.DrawEllipse(coal, null, new Point(hx + hr * 0.36, hy - hr * 0.2), 2.2 * s, 2.4 * s);
-            dc.DrawEllipse(Brushes.White, null, new Point(hx - hr * 0.33, hy - hr * 0.26), 0.7 * s, 0.7 * s);
-            dc.DrawEllipse(Brushes.White, null, new Point(hx + hr * 0.39, hy - hr * 0.26), 0.7 * s, 0.7 * s);
-            Brush blush = new SolidColorBrush(Color.FromArgb(90, 255, 120, 140));
-            dc.DrawEllipse(blush, null, new Point(hx - hr * 0.55, hy + hr * 0.15), 3 * s, 2 * s);
-            dc.DrawEllipse(blush, null, new Point(hx + hr * 0.55, hy + hr * 0.15), 3 * s, 2 * s);
-            for (int k = -2; k <= 2; k++)
-                dc.DrawEllipse(coal, null, new Point(hx + k * hr * 0.2, hy + hr * 0.42 - Math.Abs(k) * hr * 0.08), 1.25 * s, 1.25 * s);
-            StreamGeometry nose = new StreamGeometry();
-            using (StreamGeometryContext c = nose.Open())
+            double x = m.X, hr = rs[n - 1], hy = ys[n - 1], br = rs[n - 2], by = ys[n - 2], s = hr / 16.0;
+            // пуговицы-угольки
+            for (int k = 0; k < 3; k++)
             {
-                c.BeginFigure(new Point(hx, hy - hr * 0.08), true, true);
-                c.BezierTo(new Point(hx + hr * 0.6, hy - hr * 0.02), new Point(hx + hr * 1.0, hy + hr * 0.08), new Point(hx + hr * 1.25, hy + hr * 0.15), true, false);
-                c.BezierTo(new Point(hx + hr * 0.9, hy + hr * 0.2), new Point(hx + hr * 0.4, hy + hr * 0.24), new Point(hx, hy + hr * 0.2), true, false);
+                double cy = by - br * 0.45 + k * br * 0.42;
+                dc.DrawEllipse(coal, null, new Point(x, cy), 2.3 * s, 2.3 * s);
+                dc.DrawEllipse(coalHi, null, new Point(x - 0.7 * s, cy - 0.8 * s), 0.7 * s, 0.7 * s);
             }
-            dc.DrawGeometry(carrot, null, nose);
-            // шарф с хвостом на ветру
-            Color scc = ScarfColors[m.Scarf];
-            Brush sc = new LinearGradientBrush(scc, Color.FromRgb((byte)(scc.R * 0.7), (byte)(scc.G * 0.7), (byte)(scc.B * 0.7)), 90);
-            double ny = hy + hr * 0.78;
-            dc.DrawRoundedRectangle(sc, null, new Rect(m.X - hr * 1.0, ny - 3 * s, hr * 2.0, 6 * s), 3 * s, 3 * s);
-            double flap = Math.Sin(time * 5 + m.X) * 3 * s + wind * 0.04;
+            // шарф с полосками и бахромой, хвост колышется на ветру
+            Color c1 = ScarfColors[m.Scarf], c2 = ScarfColors[(m.Scarf + 1) % ScarfColors.Length];
+            Brush b1 = new SolidColorBrush(c1), b2 = new SolidColorBrush(c2);
+            double ny = hy + hr * 0.8;
+            StreamGeometry band = new StreamGeometry();
+            using (StreamGeometryContext c = band.Open())
+            {
+                c.BeginFigure(new Point(x - hr * 0.98, ny - 3 * s), true, true);
+                c.QuadraticBezierTo(new Point(x, ny + 4 * s), new Point(x + hr * 0.98, ny - 3 * s), true, false);
+                c.LineTo(new Point(x + hr * 0.95, ny + 4 * s), true, false);
+                c.QuadraticBezierTo(new Point(x, ny + 11 * s), new Point(x - hr * 0.95, ny + 4 * s), true, false);
+            }
+            dc.DrawGeometry(b1, null, band);
+            Pen stripe = new Pen(b2, 2 * s);
+            for (int k = -3; k <= 3; k++) dc.DrawLine(stripe, new Point(x + k * hr * 0.26, ny - 2 * s + Math.Abs(k) * -0.6 * s), new Point(x + k * hr * 0.26, ny + 4 * s + Math.Abs(k) * -0.6 * s));
+            double flap = Math.Sin(time * 4 + m.X) * 2.5 * s + wind * 0.03;
+            double tx = x - hr * 0.45;
             StreamGeometry tail = new StreamGeometry();
             using (StreamGeometryContext c = tail.Open())
             {
-                c.BeginFigure(new Point(m.X - hr * 0.5, ny), true, true);
-                c.BezierTo(new Point(m.X - hr * 0.6 + flap, ny + hr * 0.6), new Point(m.X - hr * 0.7 + flap, ny + hr * 0.9), new Point(m.X - hr * 0.75 + flap * 1.4, ny + hr * 1.25), true, false);
-                c.LineTo(new Point(m.X - hr * 0.3 + flap * 1.4, ny + hr * 1.2), true, false);
-                c.BezierTo(new Point(m.X - hr * 0.3 + flap, ny + hr * 0.8), new Point(m.X - hr * 0.2, ny + hr * 0.4), new Point(m.X - hr * 0.15, ny), true, false);
+                c.BeginFigure(new Point(tx, ny + 2 * s), true, true);
+                c.QuadraticBezierTo(new Point(tx - 2 * s + flap * 0.5, ny + 2 * s + hr * 0.7), new Point(tx - 4 * s + flap, ny + 2 * s + hr * 1.15), true, false);
+                c.LineTo(new Point(tx + 5 * s + flap, ny + 3 * s + hr * 1.15), true, false);
+                c.QuadraticBezierTo(new Point(tx + 6 * s + flap * 0.5, ny + 3 * s + hr * 0.6), new Point(tx + 7 * s, ny + 2 * s), true, false);
             }
-            dc.DrawGeometry(sc, null, tail);
-            // шапка
-            if (m.Hat < HatColors.Length)
+            dc.DrawGeometry(b1, null, tail);
+            Pen fr = new Pen(b1, 1.4 * s); fr.StartLineCap = fr.EndLineCap = PenLineCap.Round;
+            for (int k = 0; k < 3; k++)
+            {
+                double fx = tx - 3.5 * s + flap + k * 3.2 * s, fy = ny + 3 * s + hr * 1.15;
+                dc.DrawLine(fr, new Point(fx, fy), new Point(fx + 0.5 * s, fy + 4 * s));
+            }
+            dc.DrawLine(stripe, new Point(tx - 1.8 * s + flap * 0.4, ny + hr * 0.5), new Point(tx + 6.2 * s + flap * 0.4, ny + hr * 0.5 + 0.6 * s));
+            dc.DrawLine(stripe, new Point(tx - 2.8 * s + flap * 0.7, ny + hr * 0.85), new Point(tx + 5.7 * s + flap * 0.7, ny + hr * 0.85 + 0.7 * s));
+            // лицо: глаза с бликами, румянец, улыбка, морковка
+            for (int k = -1; k <= 1; k += 2)
+            {
+                double ex = x + hr * 0.36 * k, ey = hy - hr * 0.2;
+                dc.DrawEllipse(coal, null, new Point(ex, ey), 2.3 * s, 2.7 * s);
+                dc.DrawEllipse(Brushes.White, null, new Point(ex + 0.8 * s, ey - 1 * s), 0.8 * s, 0.8 * s);
+                dc.DrawEllipse(blushB, null, new Point(x + hr * 0.56 * k, hy + hr * 0.2), 3.4 * s, 2 * s);
+            }
+            for (int k = -2; k <= 2; k++)
+                dc.DrawEllipse(coal, null, new Point(x + k * hr * 0.17, hy + hr * 0.58 - Math.Abs(k) * hr * 0.06), 1.2 * s, 1.2 * s);
+            double nx = x, n0 = hy + hr * 0.02;
+            StreamGeometry nose = new StreamGeometry();
+            using (StreamGeometryContext c = nose.Open())
+            {
+                c.BeginFigure(new Point(nx - 1 * s, n0 - 3.2 * s), true, true);
+                c.BezierTo(new Point(nx + hr * 0.5, n0 - 2.5 * s), new Point(nx + hr * 1.0, n0), new Point(nx + hr * 1.35, n0 + 2 * s), true, false);
+                c.BezierTo(new Point(nx + hr * 0.95, n0 + 3.4 * s), new Point(nx + hr * 0.5, n0 + 4 * s), new Point(nx - 1 * s, n0 + 3.4 * s), true, false);
+            }
+            dc.DrawGeometry(carrot, null, nose);
+            Pen cl = new Pen(carrotLine, 0.9 * s);
+            dc.DrawLine(cl, new Point(nx + hr * 0.35, n0 - 2.6 * s), new Point(nx + hr * 0.35 - 1 * s, n0 - 0.2 * s));
+            dc.DrawLine(cl, new Point(nx + hr * 0.7, n0 - 1.4 * s), new Point(nx + hr * 0.7 - 1 * s, n0 + 0.8 * s));
+            dc.DrawEllipse(carrotHi, null, new Point(nx + hr * 0.25, n0 - 1.8 * s), hr * 0.2, 0.8 * s);
+            // шапка: вязаная с помпоном или цилиндр с веточкой
+            if (m.Hat >= HatColors.Length) return;
+            double top = hy - hr * 0.78;
+            if (m.Hat % 2 == 1)
             {
                 Color hc = HatColors[m.Hat];
-                Brush hb = new LinearGradientBrush(Color.FromRgb((byte)Math.Min(255, hc.R + 40), (byte)Math.Min(255, hc.G + 40), (byte)Math.Min(255, hc.B + 40)), hc, 90);
-                double ty = hy - hr * 0.8;
-                if (m.Hat % 2 == 0)  // цилиндр с лентой
+                Brush hb = new LinearGradientBrush(Color.FromRgb((byte)Math.Min(255, hc.R + 50), (byte)Math.Min(255, hc.G + 50), (byte)Math.Min(255, hc.B + 50)), hc, 90);
+                StreamGeometry hat = new StreamGeometry();
+                using (StreamGeometryContext c = hat.Open())
                 {
-                    dc.DrawRoundedRectangle(hb, null, new Rect(hx - hr * 1.05, ty - 2 * s, hr * 2.1, 4 * s), 2 * s, 2 * s);
-                    dc.DrawRoundedRectangle(hb, null, new Rect(hx - hr * 0.66, ty - hr * 1.1, hr * 1.32, hr * 1.1), 2 * s, 2 * s);
-                    dc.DrawRectangle(new SolidColorBrush(ScarfColors[(m.Scarf + 2) % ScarfColors.Length]), null, new Rect(hx - hr * 0.66, ty - hr * 0.35, hr * 1.32, 3.2 * s));
+                    c.BeginFigure(new Point(x - hr * 0.98, top + hr * 0.25), true, true);
+                    c.BezierTo(new Point(x - hr * 1.0, top - hr * 0.95), new Point(x + hr * 1.0, top - hr * 0.95), new Point(x + hr * 0.98, top + hr * 0.25), true, false);
                 }
-                else  // шапка с помпоном
+                dc.DrawGeometry(hb, null, hat);
+                Pen rib = new Pen(new SolidColorBrush(Color.FromArgb(110, 0, 0, 0)), 1.2 * s);
+                for (int k = -3; k <= 3; k++)
                 {
-                    StreamGeometry b = new StreamGeometry();
-                    using (StreamGeometryContext c = b.Open())
+                    StreamGeometry rg = new StreamGeometry();
+                    using (StreamGeometryContext c = rg.Open())
                     {
-                        c.BeginFigure(new Point(hx - hr * 0.95, ty + hr * 0.15), true, true);
-                        c.BezierTo(new Point(hx - hr * 0.95, ty - hr * 0.9), new Point(hx + hr * 0.95, ty - hr * 0.9), new Point(hx + hr * 0.95, ty + hr * 0.15), true, false);
+                        c.BeginFigure(new Point(x + k * hr * 0.24, top + hr * 0.15), false, false);
+                        c.QuadraticBezierTo(new Point(x + k * hr * 0.2, top - hr * 0.4), new Point(x + k * hr * 0.1, top - hr * 0.62), true, false);
                     }
-                    dc.DrawGeometry(hb, null, b);
-                    dc.DrawRoundedRectangle(Brushes.White, null, new Rect(hx - hr * 1.0, ty, hr * 2.0, 4.5 * s), 2.2 * s, 2.2 * s);
-                    DrawBall(dc, hx, ty - hr * 0.72, hr * 0.28, 0);
+                    dc.DrawGeometry(null, rib, rg);
                 }
+                dc.DrawRoundedRectangle(new LinearGradientBrush(Color.FromRgb(255, 255, 255), Color.FromRgb(223, 232, 243), 90), null, new Rect(x - hr * 1.04, top + hr * 0.05, hr * 2.08, hr * 0.36), hr * 0.16, hr * 0.16);
+                Pen cuff = new Pen(new SolidColorBrush(Color.FromRgb(207, 217, 230)), 1.2 * s);
+                for (int k = -4; k <= 4; k++) dc.DrawLine(cuff, new Point(x + k * hr * 0.22, top + hr * 0.09), new Point(x + k * hr * 0.22, top + hr * 0.37));
+                DrawBall(dc, x + hr * 0.1, top - hr * 0.72, hr * 0.3, 0);
             }
-        }
-
-        void DrawBall(DrawingContext dc, double x, double y, double r, double rot)
-        {
-            if (r < 0.5) return;
-            RadialGradientBrush b = new RadialGradientBrush();
-            b.GradientOrigin = new Point(0.35, 0.3);
-            b.Center = new Point(0.45, 0.4);
-            b.GradientStops.Add(new GradientStop(Color.FromRgb(255, 255, 255), 0));
-            b.GradientStops.Add(new GradientStop(Color.FromRgb(234, 242, 251), 0.6));
-            b.GradientStops.Add(new GradientStop(Color.FromRgb(192, 211, 235), 1));
-            dc.DrawEllipse(b, snowEdge, new Point(x, y), r, r);
-            // фактура снега — крутится, когда шар катится
-            Brush tex = new SolidColorBrush(Color.FromArgb(70, 170, 195, 225));
-            for (int k = 0; k < 5; k++)
+            else
             {
-                double a = (rot + k * 72) * Math.PI / 180, d = r * (0.35 + 0.1 * (k % 3));
-                dc.DrawEllipse(tex, null, new Point(x + Math.Cos(a) * d, y + Math.Sin(a) * d), r * 0.09, r * 0.07);
+                Brush dark = new SolidColorBrush(Color.FromRgb(38, 40, 46));
+                dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(29, 31, 36)), null, new Rect(x - hr * 1.05, top - 1.5 * s, hr * 2.1, 4 * s), 2 * s, 2 * s);
+                StreamGeometry tube = new StreamGeometry();
+                using (StreamGeometryContext c = tube.Open())
+                {
+                    c.BeginFigure(new Point(x - hr * 0.66, top), true, true);
+                    c.LineTo(new Point(x - hr * 0.6, top - hr * 1.15), true, false);
+                    c.QuadraticBezierTo(new Point(x, top - hr * 1.25), new Point(x + hr * 0.6, top - hr * 1.15), true, false);
+                    c.LineTo(new Point(x + hr * 0.66, top), true, false);
+                }
+                dc.DrawGeometry(dark, null, tube);
+                dc.DrawRectangle(new SolidColorBrush(ScarfColors[(m.Scarf + 2) % ScarfColors.Length]), null, new Rect(x - hr * 0.65, top - hr * 0.36, hr * 1.3, 3.4 * s));
+                dc.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)), 3 * s), new Point(x - hr * 0.45, top - hr * 1.05), new Point(x - hr * 0.45, top - hr * 0.45));
+                StreamGeometry leaf = new StreamGeometry();
+                using (StreamGeometryContext c = leaf.Open())
+                {
+                    c.BeginFigure(new Point(x + hr * 0.38, top - hr * 0.36), true, true);
+                    c.LineTo(new Point(x + hr * 0.38 + 3 * s, top - hr * 0.36 - 5 * s), true, false);
+                    c.LineTo(new Point(x + hr * 0.38 + 5 * s, top - hr * 0.36), true, false);
+                }
+                dc.DrawGeometry(new SolidColorBrush(Color.FromRgb(47, 158, 90)), null, leaf);
+                dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(230, 57, 70)), null, new Point(x + hr * 0.42 + 1.5 * s, top - hr * 0.36 - 0.5 * s), 1.4 * s, 1.4 * s);
             }
         }
 
@@ -1599,7 +1749,8 @@ namespace SnowDesk
             AppDomain.CurrentDomain.UnhandledException += delegate (object o, UnhandledExceptionEventArgs e) { Log(e.ExceptionObject as Exception); };
             bool created;
             mtx = new System.Threading.Mutex(true, "Local\\SnowDeskOnce", out created);
-            if (!created) return;
+            System.Threading.EventWaitHandle showPanel = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "Local\\SnowDeskPanel");
+            if (!created) { showPanel.Set(); return; }   // снег уже идёт — ярлык просто открывает панель
             try { Native.SetProcessDPIAware(); } catch { }
             Application app = new Application();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -1644,6 +1795,11 @@ namespace SnowDesk
             tray.ContextMenuStrip = menu;
             tray.Visible = true;
             panel = new Panel(w, delegate { tray.Visible = false; app.Shutdown(); });
+            System.Threading.Thread waiter = new System.Threading.Thread(delegate ()
+            {
+                while (true) { showPanel.WaitOne(); app.Dispatcher.BeginInvoke(new Action(delegate { if (!panel.IsVisible) panel.Toggle(); })); }
+            });
+            waiter.IsBackground = true; waiter.Start();
             tray.MouseClick += delegate (object o, WF.MouseEventArgs e)
             {
                 if (e.Button == WF.MouseButtons.Left) panel.Toggle();
@@ -1659,7 +1815,7 @@ namespace SnowDesk
             GC.KeepAlive(mtx);
             if (restart)
             {
-                mtx.ReleaseMutex(); mtx.Dispose();
+                mtx.ReleaseMutex(); mtx.Dispose(); showPanel.Dispose();
                 System.Diagnostics.Process.Start(System.Reflection.Assembly.GetExecutingAssembly().Location);
             }
         }
@@ -1678,4 +1834,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 3.1. Аварийно выключить снег: Ctrl+Alt+Q. Снег пошёл ❄  Панель — синяя снежинка у часов (в стрелочке ^). Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
+Write-Host 'Готово! Версия 4 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
