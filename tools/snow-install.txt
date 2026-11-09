@@ -76,8 +76,9 @@ namespace SnowDesk
 
     class Settings
     {
-        public int Level = 1, Tool = 1, Wind = 0;       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
-        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true, Compat = false, Fps = false;
+        public int Level = 1, Tool = 1, Wind = 0, Render = 0;   // Render: 0 надёжный (видеокарта), 1 надёжный (процессор), 2 быстрый
+        public bool Compat { get { return Render != 2; } }       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
+        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true, Fps = false;
         string path;
         public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnowDesk"); } }
         public Settings()
@@ -103,14 +104,14 @@ namespace SnowDesk
                         case "santa": Santa = v == 1; break;
                         case "over": Over = v == 1; break;
                         case "tips": Tips = v == 1; break;
-                        case "compat": Compat = v == 1; break;
+                        case "render": Render = Math.Max(0, Math.Min(2, v)); break;
                         case "fps": Fps = v == 1; break;
                         case "ver": ver = v; break;
                     }
                 }
             }
             catch { }
-            if (ver < 5) { Compat = false; ver = 5; Save(); }
+            if (ver < 6) { Render = 0; ver = 6; Save(); }   // после проблем с кликами — всегда надёжный режим
         }
         int ver;
         public void Save()
@@ -119,7 +120,7 @@ namespace SnowDesk
             {
                 File.WriteAllLines(path, new string[] {
                     "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "compat=" + (Compat ? 1 : 0), "fps=" + (Fps ? 1 : 0), "ver=" + ver });
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "render=" + Render, "fps=" + (Fps ? 1 : 0), "ver=" + ver });
             }
             catch { }
         }
@@ -758,7 +759,7 @@ namespace SnowDesk
             if (blockedCount >= 2)
             {
                 blockedCount = 0;
-                if (!S.Compat) { S.Compat = true; S.Save(); Program.Restart(); }
+                if (S.Render == 2) { S.Render = 0; S.Save(); Program.Restart(); }
                 else { S.Paused = true; Front.Visibility = Visibility.Hidden; if (Tip != null) Tip("Снег мешал нажимать на окна — я его приостановил. Включи снова в панели (Пауза)."); }
             }
         }
@@ -892,7 +893,8 @@ namespace SnowDesk
             foreach (Man m in men) DrawMan(dc, m);
             if (rolling != null) DrawBall(dc, rolling.X, carrying ? my : SurfaceY(rolling.Anchor, rolling.X) - rolling.R[0] * 0.85, rolling.R[0], carrying ? 0.0001 : rollRot);
             if (!double.IsNaN(tractorX)) art.DrawTruck(dc, tractorX, groundY, time, plowPile);
-            foreach (Chunk c in chunks) dc.DrawEllipse(glow[5], null, new Point(c.X, c.Y), c.R * 1.6, c.R * 1.6);
+            if (glowSprite == null) MakeSprites();
+            foreach (Chunk c in chunks) dc.DrawImage(glowSprite[5], new Rect(c.X - c.R * 1.6, c.Y - c.R * 1.6, c.R * 3.2, c.R * 3.2));
             foreach (Spark s in sparks)
             {
                 double a = Math.Max(0, Math.Min(1, s.Life)), r = s.Max * (0.6 + 0.6 * Math.Abs(Math.Sin(s.Life * 9)));
@@ -925,7 +927,50 @@ namespace SnowDesk
             }
         }
 
+        ImageSource[] glowSprite; ImageSource crystalSprite;
+        void MakeSprites()
+        {
+            glowSprite = new ImageSource[glow.Length];
+            for (int i = 0; i < glow.Length; i++)
+            {
+                DrawingVisual v = new DrawingVisual();
+                using (DrawingContext d = v.RenderOpen()) d.DrawEllipse(glow[i], null, new Point(16, 16), 16, 16);
+                System.Windows.Media.Imaging.RenderTargetBitmap b = new System.Windows.Media.Imaging.RenderTargetBitmap(32, 32, 96, 96, PixelFormats.Pbgra32);
+                b.Render(v); b.Freeze(); glowSprite[i] = b;
+            }
+            DrawingVisual cv = new DrawingVisual();
+            using (DrawingContext d = cv.RenderOpen())
+            {
+                d.PushTransform(new MatrixTransform(30, 0, 0, 30, 32, 32));
+                d.DrawGeometry(null, crystalPen, crystalGeo);
+                d.Pop();
+                d.DrawEllipse(glow[2], null, new Point(32, 32), 14, 14);
+            }
+            System.Windows.Media.Imaging.RenderTargetBitmap cb = new System.Windows.Media.Imaging.RenderTargetBitmap(64, 64, 96, 96, PixelFormats.Pbgra32);
+            cb.Render(cv); cb.Freeze(); crystalSprite = cb;
+        }
+
         void DrawFlake(DrawingContext dc, Flake f)
+        {
+            if (glowSprite == null) MakeSprites();
+            if (f.Crystal)
+            {
+                double s2 = f.R * 1.07;
+                dc.PushTransform(new RotateTransform(f.Rot, f.X, f.Y));
+                dc.PushOpacity(0.55 + f.Depth * 0.45);
+                dc.DrawImage(crystalSprite, new Rect(f.X - s2, f.Y - s2, s2 * 2, s2 * 2));
+                dc.Pop(); dc.Pop();
+            }
+            else
+            {
+                int gi2 = Math.Min(glow.Length - 1, (int)(f.Depth * glow.Length));
+                double rr = f.R * 1.7;
+                dc.DrawImage(glowSprite[gi2], new Rect(f.X - rr, f.Y - rr, rr * 2, rr * 2));
+            }
+            return;
+        }
+
+        void DrawFlakeOld(DrawingContext dc, Flake f)
         {
             if (f.Crystal)
             {
@@ -1581,7 +1626,11 @@ namespace SnowDesk
             opts.Children.Add(Chip("🦌 Санта сам прилетает", delegate { return S.Santa; }, delegate { S.Santa = !S.Santa; S.Save(); }));
             opts.Children.Add(Chip("🚀 Запуск с Windows", Program.AutostartOn, delegate { Program.Autostart(!Program.AutostartOn()); }));
             opts.Children.Add(Chip("📈 Показать FPS", delegate { return S.Fps; }, delegate { S.Fps = !S.Fps; S.Save(); }));
-            opts.Children.Add(Chip("🐢 Совместимый режим", delegate { return S.Compat; }, delegate { S.Compat = !S.Compat; S.Save(); Program.Restart(); }));
+            root.Children.Add(opts);
+            Section(root, "ОТРИСОВКА (смотри FPS)");
+            Row(root, new string[] { "Видеокарта", "Процессор", "⚡ Быстрый*" }, delegate (int i) { return S.Render == i; }, delegate (int i) { if (S.Render != i) { S.Render = i; S.Save(); Program.Restart(); } });
+            root.Children.Add(Text("* Быстрый режим на некоторых ПК не пропускает клики мыши. Если мышь «залипла» — нажми Ctrl+Alt+Q.", 11, Sub, FontWeights.Normal, true));
+            opts = new WrapPanel();
             root.Children.Add(opts);
             System.Windows.Controls.Primitives.UniformGrid bottom = new System.Windows.Controls.Primitives.UniformGrid();
             bottom.Columns = 2; bottom.Margin = new Thickness(0, 12, 0, 0);
@@ -1776,6 +1825,7 @@ namespace SnowDesk
             System.Threading.EventWaitHandle showPanel = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, "Local\\SnowDeskPanel");
             if (!created) { showPanel.Set(); return; }   // снег уже идёт — ярлык просто открывает панель
             try { Native.SetProcessDPIAware(); } catch { }
+            if (new Settings().Render == 1) System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
             Application app = new Application();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             app.DispatcherUnhandledException += delegate (object o, DispatcherUnhandledExceptionEventArgs e) { Log(e.Exception); e.Handled = true; };
@@ -1831,7 +1881,14 @@ namespace SnowDesk
 
             w.Front.Show();
             // плавно: шаг на каждый кадр экрана
-            CompositionTarget.Rendering += delegate { try { w.Step(); } catch (Exception ex) { Log(ex); } };
+            DateTime lastFrame = DateTime.Now;
+            CompositionTarget.Rendering += delegate
+            {
+                DateTime now = DateTime.Now;
+                if (S.Compat && (now - lastFrame).TotalMilliseconds < 31) return;
+                lastFrame = now;
+                try { w.Step(); } catch (Exception ex) { Log(ex); }
+            };
             if (S.Tips)
                 tray.ShowBalloonTip(8000, "❄ Снег пошёл!", "Нажми на снежинку у часов — откроется панель: снегопад, варежка, снежки, лопата, снегоуборщик, Санта ⛄", WF.ToolTipIcon.Info);
             app.Run();
@@ -1858,4 +1915,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 5 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
+Write-Host 'Готово! Версия 6 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
