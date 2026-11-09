@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SNOW FOR YOU — снег на рабочем столе Windows бесплатно</title>
+<meta name="description" content="SNOW FOR YOU — бесплатная программа: снег падает на рабочий стол Windows, ложится на окна и панель задач. Лепи снеговиков мышкой, сгребай снег лопатой, вызывай снегоуборщик и Санту с оленями.">
+<meta name="keywords" content="снег на рабочем столе, снег на рабочий стол windows, падающий снег программа, новогодний снег на экран, снеговик на рабочем столе, snow for you, бесплатно">
+<link rel="canonical" href="https://payx11.github.io/snow/">
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="SNOW FOR YOU — снег на рабочем столе">
+<meta property="og:description" content="Бесплатно. Снег на окнах, снеговики, Санта с оленями и снегоуборочная машина прямо на твоём Windows.">
+<meta property="og:image" content="https://payx11.github.io/snow/hero.jpg">
+<meta name="theme-color" content="#0f1c3d">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800;900&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"SNOW FOR YOU","operatingSystem":"Windows 10, Windows 11","applicationCategory":"DesktopEnhancementApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"RUB"},"softwareVersion":"1.0","downloadUrl":"https://payx11.github.io/snow/SnowForYou.exe","image":"https://payx11.github.io/snow/hero.jpg"}
+</script>
+<style>
+:root{--bg1:#0b1530;--bg2:#1b3366;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.13);--txt:#eef4ff;--sub:#a9bbdd;--blue:#3b8cff;--blue2:#5fb8ff;--tg:#2aabee}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Montserrat,Segoe UI,Arial,sans-serif;color:var(--txt);background:linear-gradient(180deg,var(--bg1) 0%,var(--bg2) 60%,#2c4f92 100%);min-height:100vh;overflow-x:hidden}
+#snow{position:fixed;inset:0;pointer-events:none;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:0 16px}
+nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
+.logo{display:flex;align-items:center;gap:10px;font-weight:900;letter-spacing:.06em;font-size:18px;color:#fff;text-decoration:none}
+.logo img{width:38px;height:38px;border-radius:10px}
+.navlinks a{color:var(--sub);text-decoration:none;font-weight:600;margin-left:18px;font-size:14px}
+.navlinks a:hover{color:#fff}
+.hero{text-align:center;padding:40px 0 20px}
+.badge{display:inline-block;padding:7px 14px;border-radius:99px;background:rgba(95,184,255,.15);border:1px solid rgba(95,184,255,.35);color:#bfe2ff;font-weight:700;font-size:13px}
+h1{font-size:clamp(40px,8vw,84px);font-weight:900;letter-spacing:.04em;margin:18px 0 10px;line-height:1;background:linear-gradient(180deg,#fff 30%,#bfe2ff);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 10px 40px rgba(95,184,255,.25)}
+.lead{font-size:clamp(16px,2.4vw,20px);color:var(--sub);max-width:680px;margin:0 auto 28px;line-height:1.5;font-weight:500}
+.btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:17px 30px;border-radius:16px;font-weight:800;font-size:17px;text-decoration:none;transition:transform .15s,box-shadow .15s}
+.btn:hover{transform:translateY(-2px)}
+.dl{background:linear-gradient(135deg,var(--blue2),var(--blue));color:#fff;box-shadow:0 12px 34px rgba(59,140,255,.45)}
+.dl:hover{box-shadow:0 16px 44px rgba(59,140,255,.6)}
+.tg{background:rgba(42,171,238,.14);border:1px solid rgba(42,171,238,.5);color:#d6f1ff}
+.btn small{display:block;font-size:12px;font-weight:600;opacity:.85}
+.note{margin-top:14px;color:var(--sub);font-size:13px}
+.shot{margin:46px auto 0;border-radius:22px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.45)}
+.shot img{display:block;width:100%;height:auto}
+section{padding:70px 0 10px}
+h2{font-size:clamp(26px,4vw,38px);font-weight:900;text-align:center;margin:0 0 10px}
+.h2sub{text-align:center;color:var(--sub);margin:0 0 34px;font-weight:500}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;backdrop-filter:blur(6px)}
+.card .ic{font-size:34px}
+.card h3{margin:10px 0 6px;font-size:18px;font-weight:800}
+.card p{margin:0;color:var(--sub);line-height:1.5;font-size:15px;font-weight:500}
+.art{margin-top:20px;border-radius:20px;overflow:hidden;border:1px solid var(--line)}
+.art img{display:block;width:100%;height:auto}
+.steps{counter-reset:s;display:grid;gap:14px;max-width:760px;margin:0 auto}
+.step{display:flex;gap:16px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px}
+.step:before{counter-increment:s;content:counter(s);flex:0 0 38px;height:38px;border-radius:12px;background:linear-gradient(135deg,var(--blue2),var(--blue));display:flex;align-items:center;justify-content:center;font-weight:900}
+.step b{display:block;margin-bottom:4px}
+.step span{color:var(--sub);line-height:1.5;font-weight:500;font-size:15px}
+details{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;max-width:760px;margin:0 auto 12px}
+summary{cursor:pointer;font-weight:700}
+details p{color:var(--sub);line-height:1.55;margin:10px 0 0;font-weight:500}
+.cta{text-align:center;background:linear-gradient(135deg,rgba(95,184,255,.18),rgba(59,140,255,.08));border:1px solid rgba(95,184,255,.3);border-radius:26px;padding:40px 18px;margin-top:20px}
+footer{padding:50px 0 40px;text-align:center;color:var(--sub);font-size:13px;line-height:1.7}
+footer a{color:#bfe2ff}
+@media (max-width:600px){.navlinks a:not(.tgl){display:none}.btn{width:100%;justify-content:center}}
+</style>
+</head>
+<body>
+<canvas id="snow"></canvas>
+<div class="wrap">
+<nav>
+  <a class="logo" href="#"><img src="icon.png" alt="">SNOW FOR YOU</a>
+  <div class="navlinks"><a href="#features">Возможности</a><a href="#install">Установка</a><a class="tgl" href="https://t.me/PayPasX" target="_blank" rel="noopener">💬 Поддержка</a></div>
+</nav>
+
+<div class="hero">
+  <span class="badge">❄ Бесплатно · Windows 10 и 11</span>
+  <h1>SNOW FOR YOU</h1>
+  <p class="lead">Настоящая зима на рабочем столе. Снег падает, ложится на окна и панель задач, а ты лепишь снеговиков прямо мышкой.</p>
+  <div class="btns">
+    <a class="btn dl" href="SnowForYou.exe" download><span>⬇</span><span>Скачать бесплатно<small>Windows · 200 КБ · версия 1.0</small></span></a>
+    <a class="btn tg" href="https://t.me/PayPasX" target="_blank" rel="noopener"><span>💬</span><span>Поддержка<small>проблемы, идеи, пожелания</small></span></a>
+  </div>
+  <div class="note">Без рекламы и регистрации. Программа сама обновляется.</div>
+  <div class="shot"><img src="hero.jpg" alt="Снег на рабочем столе Windows: Санта с оленями, снеговик и снегоуборочная машина" width="1600" height="900"></div>
+</div>
+
+<section id="features">
+  <h2>Что умеет</h2>
+  <p class="h2sub">Всё работает поверх твоего рабочего стола и не мешает нажимать на окна</p>
+  <div class="grid">
+    <div class="card"><div class="ic">❄️</div><h3>Живой снегопад</h3><p>Лёгкий снег, ровный или метель. Ветер порывами, влево или вправо. Плавно, без тормозов.</p></div>
+    <div class="card"><div class="ic">🪟</div><h3>Сугробы на окнах</h3><p>Снег ложится на верх открытых окон и на панель задач. Сдвинул окно — снег осыпается.</p></div>
+    <div class="card"><div class="ic">⛄</div><h3>Лепи снеговиков</h3><p>Зажми кнопку мыши на снегу и катай ком. Поставь второй сверху — получится снеговик в шапке и шарфе.</p></div>
+    <div class="card"><div class="ic">🧤</div><h3>Варежка и лопата</h3><p>Сметай снег варежкой или сгребай лопатой — ковш зачерпывает снег прямо под курсором.</p></div>
+    <div class="card"><div class="ic">🚜</div><h3>Снегоуборочная машина</h3><p>Выезжает сама раз в 5, 15 или 30 минут или по кнопке и расчищает сугроб у панели задач.</p></div>
+    <div class="card"><div class="ic">🎅</div><h3>Санта с оленями</h3><p>Иногда пролетает по экрану и оставляет волшебную пыль. Позвать можно в любой момент.</p></div>
+    <div class="card"><div class="ic">💡</div><h3>Гирлянда</h3><p>Мигающая гирлянда по верху экрана. Включается и выключается одной кнопкой.</p></div>
+    <div class="card"><div class="ic">🎮</div><h3>Не мешает играм</h3><p>В полноэкранных играх и фильмах снег сам прячется. Выключить быстро: Ctrl+Alt+Q.</p></div>
+  </div>
+  <div class="art"><img src="art.jpg" alt="Санта с оленями, снегоуборочная машина и лопата SNOW FOR YOU" loading="lazy"></div>
+</section>
+
+<section id="install">
+  <h2>Как установить</h2>
+  <p class="h2sub">Меньше минуты</p>
+  <div class="steps">
+    <div class="step"><div><b>Скачай программу</b><span>Нажми «Скачать бесплатно». Загрузится файл SnowForYou.exe.</span></div></div>
+    <div class="step"><div><b>Запусти файл</b><span>Если Windows покажет синее окно «Система Windows защитила ваш компьютер» — нажми «Подробнее», потом «Выполнить в любом случае». Так Windows реагирует на все новые программы без платной подписи.</span></div></div>
+    <div class="step"><div><b>Готово — идёт снег!</b><span>На рабочем столе появится ярлык «SNOW FOR YOU». Настройки открываются по снежинке у часов, справа внизу.</span></div></div>
+  </div>
+</section>
+
+<section id="faq">
+  <h2>Вопросы</h2>
+  <p class="h2sub">&nbsp;</p>
+  <details><summary>Это правда бесплатно?</summary><p>Да. Без рекламы, без подписок и без регистрации.</p></details>
+  <details><summary>Не будет тормозить компьютер?</summary><p>Нет. Программа лёгкая, а в играх и фильмах на весь экран снег сам прячется. Если что-то не так — открой настройки (снежинка у часов) и включи «Показать FPS», а потом напиши нам в поддержку.</p></details>
+  <details><summary>Как выключить или удалить?</summary><p>Выключить — Ctrl+Alt+Q или «Выход» в настройках. Убрать из автозапуска — кнопка «Запуск с Windows» в настройках. Удалить — удали папку %LOCALAPPDATA%\SnowForYou и ярлык на рабочем столе.</p></details>
+  <details><summary>Есть идея или нашёл ошибку?</summary><p>Пиши в Telegram <a href="https://t.me/PayPasX" style="color:#bfe2ff">@PayPasX</a> — добавим, исправим, и программа обновится у всех сама.</p></details>
+</section>
+
+<section>
+  <div class="cta">
+    <h2>Пусть идёт снег ❄</h2>
+    <p class="h2sub">Скачай и покажи друзьям</p>
+    <div class="btns">
+      <a class="btn dl" href="SnowForYou.exe" download><span>⬇</span><span>Скачать SNOW FOR YOU</span></a>
+      <a class="btn tg" href="https://t.me/PayPasX" target="_blank" rel="noopener"><span>💬</span><span>Написать в поддержку</span></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  © 2026 SNOW FOR YOU · <a href="https://payx11.github.io/snow/">payx11.github.io/snow</a> · <a href="https://t.me/PayPasX">@PayPasX</a><br>
+  Программа бесплатная. Скачивай только с этого сайта: копии с других сайтов могут быть подделкой.<br>
+  Распространение под другим названием и продажа запрещены.
+</footer>
+</div>
+<script>
+(function(){var c=document.getElementById('snow'),x=c.getContext('2d'),W,H,f=[],dpr=Math.min(2,window.devicePixelRatio||1);
+function rs(){W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;c.style.width=W+'px';c.style.height=H+'px';x.setTransform(dpr,0,0,dpr,0,0)}
+rs();addEventListener('resize',rs);
+var n=Math.round(Math.min(140,W/9));for(var i=0;i<n;i++)f.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*2.6+.8,s:Math.random()*.8+.3,p:Math.random()*6.28});
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function t(){x.clearRect(0,0,W,H);for(var i=0;i<f.length;i++){var q=f[i];q.p+=.01;q.y+=q.s;q.x+=Math.sin(q.p)*.4;if(q.y>H+5){q.y=-5;q.x=Math.random()*W}
+x.globalAlpha=.35+q.r/5;x.beginPath();x.arc(q.x,q.y,q.r,0,6.283);x.fillStyle='#fff';x.fill()}if(!reduce)requestAnimationFrame(t)}t()})();
+</script>
+</body>
+</html>
