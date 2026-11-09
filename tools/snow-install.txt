@@ -18,6 +18,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using WF = System.Windows.Forms;
 using SD = System.Drawing;
@@ -67,7 +68,7 @@ namespace SnowDesk
 
     class Settings
     {
-        public int Level = 1, Tool = 1, Wind = 0;       // Tool: 0 ничего, 1 варежка, 2 снежок; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
+        public int Level = 1, Tool = 1, Wind = 0;       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
         public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true;
         string path;
         public Settings()
@@ -85,7 +86,7 @@ namespace SnowDesk
                     switch (kv[0])
                     {
                         case "level": Level = Math.Max(0, Math.Min(2, v)); break;
-                        case "tool": Tool = Math.Max(0, Math.Min(2, v)); break;
+                        case "tool": Tool = Math.Max(0, Math.Min(3, v)); break;
                         case "wind": Wind = Math.Max(0, Math.Min(3, v)); break;
                         case "garland": Garland = v == 1; break;
                         case "mouse": Mouse = v == 1; break;
@@ -158,7 +159,7 @@ namespace SnowDesk
         double[] ground;
         const double COL = 4, MAXG = 70;
         double groundY, wind, windTarget, nextGust, time;
-        double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta;
+        double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta, plowPile;
         double mx = -9999, my = -9999, pmx, pmy, mSpeed;
         bool hidden, tipSnowball;
         int tick;
@@ -319,7 +320,8 @@ namespace SnowDesk
 
             StepFlakes(dt);
             Settle();
-            if (S.Tool == 1) Mitten(dt, mdx);
+            if (S.Tool == 1) Mitten(dt, mdx, 4, 0.35, 1);
+            if (S.Tool == 3) Mitten(dt, mdx, 9, 0.9, 2.2);
             if (S.Tool == 2) Snowball(dt, mdx);
             StepChunks(dt);
             StepTractor(dt);
@@ -402,32 +404,43 @@ namespace SnowDesk
         }
 
         // варежка: проводишь курсором по сугробу — снег разлетается
-        void Mitten(double dt, double mdx)
+        // варежка и лопата: проводишь курсором по снегу — он разлетается
+        void Mitten(double dt, double mdx, int reach, double power, double chunk)
         {
             if (mSpeed < 40) return;
-            double amount = Math.Min(6, mSpeed * dt * 0.35);
+            double amount = Math.Min(4 + power * 6, mSpeed * dt * power);
             double top = groundY - GroundAt(mx);
-            if (my > top - 16 && my < groundY + 6) SweepCols(ground, 0, mx, amount, mdx, groundY);
+            if (my > top - 18 && my < groundY + 6) SweepCols(ground, 0, mx, amount, mdx, groundY, reach, chunk);
             foreach (Cap c in caps.Values)
             {
                 if (mx < c.L - 10 || mx > c.R + 10) continue;
                 double h = Math.Max(0, CapAt(c, mx));
-                if (my > c.T - h - 16 && my < c.T + 8) SweepCols(c.H, c.L, mx, amount, mdx, c.T);
+                if (my > c.T - h - 18 && my < c.T + 8) SweepCols(c.H, c.L, mx, amount, mdx, c.T, reach, chunk);
             }
         }
 
-        void SweepCols(double[] h, double left, double x, double amount, double mdx, double baseY)
+        void SweepCols(double[] h, double left, double x, double amount, double mdx, double baseY, int reach, double chunk)
         {
             int i0 = (int)((x - left) / COL);
-            for (int k = -4; k <= 4; k++)
+            for (int k = -reach; k <= reach; k++)
             {
                 int j = i0 + k;
                 if (j < 0 || j >= h.Length || h[j] <= 0.3) continue;
-                double take = Math.Min(h[j], amount * (1 - Math.Abs(k) / 5.0));
+                double take = Math.Min(h[j], amount * (1 - Math.Abs(k) / (reach + 1.0)));
                 h[j] -= take;
-                if (take > 0.6 && rnd.NextDouble() < 0.5 && chunks.Count < 700)
-                    chunks.Add(new Chunk { X = left + j * COL, Y = baseY - h[j] - 2, Vx = mdx * 8 + (rnd.NextDouble() - 0.5) * 80, Vy = -120 - rnd.NextDouble() * 140, R = 1.4 + rnd.NextDouble() * 2, Life = 1.6 });
+                if (take > 0.6 && rnd.NextDouble() < 0.5 && chunks.Count < 800)
+                    chunks.Add(new Chunk { X = left + j * COL, Y = baseY - h[j] - 2, Vx = mdx * 8 + (rnd.NextDouble() - 0.5) * 80, Vy = -120 - rnd.NextDouble() * 140 * chunk, R = (1.4 + rnd.NextDouble() * 2) * chunk, Life = 1.6 });
             }
+        }
+
+        // насколько курсор близко к снегу (для картинки инструмента у курсора)
+        double toolFade;
+        bool CursorNearSnow()
+        {
+            if (my > groundY - GroundAt(mx) - 90 && my < groundY + 10) return true;
+            foreach (Cap c in caps.Values)
+                if (mx > c.L - 20 && mx < c.R + 20 && my > c.T - 90 && my < c.T + 12) return true;
+            return false;
         }
 
         // снежок: курсор над сугробом — катаем шар, остановился на секунду — шар ставится
@@ -563,18 +576,25 @@ namespace SnowDesk
         void StepTractor(double dt)
         {
             if (double.IsNaN(tractorX)) return;
-            tractorX += 210 * dt;
-            double plow = tractorX + 90;
+            tractorX += 190 * dt;
+            double plow = tractorX + 162;
             int i0 = (int)(plow / COL);
             for (int k = 0; k < 6; k++)
             {
                 int j = i0 + k;
                 if (j < 0 || j >= ground.Length) continue;
-                double take = ground[j] * 0.9;
-                if (take > 0.5 && rnd.NextDouble() < 0.35)
-                    chunks.Add(new Chunk { X = j * COL, Y = groundY - ground[j], Vx = 120 + rnd.NextDouble() * 160, Vy = -220 - rnd.NextDouble() * 160, R = 2 + rnd.NextDouble() * 3, Life = 1.2 });
+                double take = Math.Max(0, ground[j] - 0.5) * 0.92;
+                plowPile = Math.Min(400, plowPile + take);
                 ground[j] -= take;
             }
+            // снег перед отвалом вылетает струёй вперёд-вверх
+            int nSpray = (int)Math.Min(4, plowPile / 25);
+            for (int k = 0; k < nSpray && chunks.Count < 800; k++)
+            {
+                chunks.Add(new Chunk { X = plow + 6, Y = groundY - 14 - rnd.NextDouble() * 10, Vx = 160 + rnd.NextDouble() * 220, Vy = -260 - rnd.NextDouble() * 220, R = 1.8 + rnd.NextDouble() * 2.8, Life = 1.6 });
+                plowPile -= 6;
+            }
+            plowPile *= Math.Pow(0.6, dt);
             foreach (Man m in men) if (m.Anchor == IntPtr.Zero && double.IsNaN(m.FallY) && Math.Abs(m.X - plow) < 30 && m.Melt == 0) m.Melt = 0.001;
             if (tractorX > Width + 160) tractorX = double.NaN;
         }
@@ -708,9 +728,15 @@ namespace SnowDesk
         }
 
         // ---------- команды из меню ----------
-        public void Tractor() { if (double.IsNaN(tractorX)) tractorX = -200; }
+        public void Tractor() { if (double.IsNaN(tractorX)) { tractorX = -220; plowPile = 0; } }
 
-        public void Shovel()  // лопата: убрать весь снег
+        public void CleanAll()  // машина чистит низ, с окон снег осыпается
+        {
+            Tractor();
+            foreach (Cap c in caps.Values) { Crumble(c); for (int i = 0; i < c.H.Length; i++) if (c.H[i] > 0) c.H[i] = 0; }
+        }
+
+        public void Shovel()  // мгновенно убрать весь снег
         {
             for (int i = 0; i < ground.Length; i += 3) if (ground[i] > 3) Spill(i * COL, groundY, ground[i] * 0.6);
             for (int i = 0; i < ground.Length; i++) ground[i] = 0.5;
@@ -759,7 +785,7 @@ namespace SnowDesk
             DrawGround(dc);
             foreach (Man m in men) DrawMan(dc, m);
             if (rolling != null) DrawBall(dc, rolling.X, SurfaceY(rolling.Anchor, rolling.X) - rolling.R[0] * 0.85, rolling.R[0], rollRot);
-            if (!double.IsNaN(tractorX)) art.DrawTractor(dc, tractorX, groundY, time);
+            if (!double.IsNaN(tractorX)) art.DrawTruck(dc, tractorX, groundY, time, plowPile);
             foreach (Chunk c in chunks) dc.DrawEllipse(glow[5], null, new Point(c.X, c.Y), c.R * 1.6, c.R * 1.6);
             foreach (Spark s in sparks)
             {
@@ -767,6 +793,18 @@ namespace SnowDesk
                 dc.PushOpacity(a); dc.DrawEllipse(dust, null, new Point(s.X, s.Y), r * 2.2, r * 2.2); dc.Pop();
             }
             if (S.Over) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
+            // варежка / лопата / снежок у курсора, когда он рядом со снегом
+            bool near = S.Tool != 0 && rolling == null && CursorNearSnow();
+            toolFade = Math.Max(0, Math.Min(1, toolFade + (near ? 0.15 : -0.1)));
+            if (toolFade > 0.01)
+            {
+                double tilt = Math.Max(-25, Math.Min(25, (mx - pmx) * 1.5));
+                dc.PushOpacity(toolFade);
+                if (S.Tool == 1) art.DrawMitten(dc, mx, my, tilt);
+                else if (S.Tool == 3) art.DrawShovel(dc, mx, my, tilt);
+                else if (S.Tool == 2) DrawBall(dc, mx + 14, my + 16, 7, time * 60);
+                dc.Pop();
+            }
         }
 
         void DrawFlake(DrawingContext dc, Flake f)
@@ -1043,6 +1081,7 @@ namespace SnowDesk
             deerBack.Add(L("M27,44 C40,46 55,46 70,43", P(gold, 3)));
             deerBack.Add(L("M24,40 C22,47 23,52 28,55", P(S("#c7262e"), 3.4)));
             deerBack.Add(E(27, 56, 2.6, 2.6, gold)); deerBack.Add(E(33, 57, 2.2, 2.2, gold));
+            InitTools();
             reins = L("M90,46 C120,52 150,52 186,50 C216,48 250,50 282,46 C300,44 318,62 330,70", P(gold, 1.6));
             noseGlow = new RadialGradientBrush(Color.FromArgb(240, 255, 107, 107), Color.FromArgb(0, 255, 42, 42)); noseGlow.Freeze();
             noseRed = S("#ff3b3b");
@@ -1109,6 +1148,93 @@ namespace SnowDesk
             dc.Pop(); dc.Pop();
         }
 
+        List<Part> mitten = new List<Part>(), shovel = new List<Part>(), truck = new List<Part>(), beacon = new List<Part>();
+        Brush beaconGlow;
+        void InitTools()
+        {
+            Brush mit = V("#ff5a5f", "#c41d2b"), cuff = V("#ffffff", "#dfe8f3"), white = S("#ffffff");
+            mitten.Add(F("M10,46 C4,40 2,28 4,18 C6,8 14,2 24,2 C34,2 40,10 40,22 L40,34 C44,30 50,30 52,36 C54,42 48,48 42,52 L38,56 L12,56 Z", mit));
+            Pen dash = new Pen(white, 2); dash.DashStyle = new DashStyle(new double[] { 1.5, 1.5 }, 0); dash.Freeze();
+            mitten.Add(L("M8,22 C14,20 32,20 38,22 M7,30 C14,28 32,28 39,30", dash));
+            mitten.Add(F("M14,14 l3,-3 3,3 -3,3 z M24,10 l3,-3 3,3 -3,3 z", white));
+            mitten.Add(R(8, 52, 34, 13, 5, cuff));
+            mitten.Add(L("M12,55 v7 M17,55 v7 M22,55 v7 M27,55 v7 M32,55 v7 M37,55 v7", P(S("#c9d6e6"), 1.2)));
+            mitten.Add(L("M16,8 C20,5 26,5 30,7", P(new SolidColorBrush(Color.FromArgb(115, 255, 255, 255)), 2.5)));
+
+            Brush wood = new LinearGradientBrush(C("#c98c4e"), C("#8a5a2b"), new Point(0, 0), new Point(1, 0)); wood.Freeze();
+            Brush blade = D("#7dd6ff", "#3ea2ee", "#1f7fd1");
+            shovel.Add(R(26, 6, 8, 82, 4, wood));
+            shovel.Add(F("M16,2 C16,-3 44,-3 44,2 L44,8 L16,8 Z", S("#2b2f36")));
+            shovel.Add(R(27, 8, 6, 6, 1, S("#2b2f36")));
+            shovel.Add(F("M14,84 C14,80 46,80 46,84 L50,118 C50,126 10,126 10,118 Z", blade));
+            shovel.Add(L("M17,90 L43,90", P(new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)), 3)));
+            shovel.Add(F("M11,117 C15,108 45,108 49,117 C50,125 10,125 11,117 Z", white));
+
+            Brush body = V("#ffd23f", "#f29d0c"), glass = V("#d7f0ff", "#7cb9e8"), dark = S("#2b2f36"), plow = new LinearGradientBrush(C("#ff6a3d"), C("#c2361a"), new Point(0, 0), new Point(1, 0));
+            plow.Freeze();
+            truck.Add(F("M6,84 L6,58 C6,52 10,48 16,48 L96,48 L96,84 Z", body));
+            truck.Add(R(12, 56, 78, 6, 3, dark));
+            truck.Add(L("M14,72 l10,0 M30,72 l10,0 M46,72 l10,0 M62,72 l10,0 M78,72 l10,0", new Pen(dark, 5)));
+            truck.Add(F("M96,84 L96,30 C96,24 100,20 106,20 L136,20 C142,20 146,24 148,30 L156,52 L162,54 C166,55 168,58 168,62 L168,84 Z", body));
+            truck.Add(F("M104,28 L134,28 C138,28 140,30 141,33 L147,50 L104,50 Z", glass));
+            truck.Add(F("M108,32 L120,32 L114,46 L108,46 Z", new SolidColorBrush(Color.FromArgb(90, 255, 255, 255))));
+            truck.Add(R(120, 58, 12, 3, 1.5, dark));
+            truck.Add(E(164, 66, 3.5, 3.5, S("#fff7c2")));
+            truck.Add(L("M168,70 L184,70 M168,78 L184,82", P(S("#3a3f48"), 5)));
+            truck.Add(F("M184,50 C196,56 200,70 198,92 L184,92 C188,80 188,64 182,54 Z", plow));
+            truck.Add(L("M184,92 L200,92", P(S("#e8edf5"), 3)));
+            truck.Add(L("M186,58 l8,4 M188,66 l9,3 M189,74 l9,2", P(new SolidColorBrush(Color.FromArgb(128, 255, 255, 255)), 2.2)));
+            beaconGlow = new RadialGradientBrush(Color.FromArgb(230, 255, 176, 48), Color.FromArgb(0, 255, 138, 0)); beaconGlow.Freeze();
+        }
+
+        public void DrawMitten(DrawingContext dc, double x, double y, double tilt)
+        {
+            // кончики пальцев варежки — у курсора
+            dc.PushTransform(new TranslateTransform(x - 22, y - 4));
+            dc.PushTransform(new RotateTransform(tilt + 10, 22, 4));
+            foreach (Part p in mitten) Draw(dc, p);
+            dc.Pop(); dc.Pop();
+        }
+
+        public void DrawShovel(DrawingContext dc, double x, double y, double tilt)
+        {
+            // середина ковша — у курсора, лопата чуть наклонена
+            dc.PushTransform(new TranslateTransform(x - 30, y - 112));
+            dc.PushTransform(new RotateTransform(-22 + tilt, 30, 112));
+            foreach (Part p in shovel) Draw(dc, p);
+            dc.Pop(); dc.Pop();
+        }
+
+        public void DrawTruck(DrawingContext dc, double x, double groundY, double t, double pile)
+        {
+            dc.PushTransform(new TranslateTransform(x, groundY - 104 * 0.82 + Math.Sin(t * 18) * 0.6));
+            dc.PushTransform(new ScaleTransform(0.82, 0.82));
+            bool on = ((int)(t * 5)) % 2 == 0;
+            if (on) dc.DrawEllipse(beaconGlow, null, new Point(114, 16), 30, 30);
+            else dc.DrawEllipse(beaconGlow, null, new Point(130, 16), 22, 22);
+            dc.DrawRoundedRectangle(new SolidColorBrush(on ? Color.FromRgb(255, 175, 30) : Color.FromRgb(200, 110, 20)), null, new Rect(108, 12, 12, 8), 3, 3);
+            dc.DrawRoundedRectangle(new SolidColorBrush(on ? Color.FromRgb(200, 110, 20) : Color.FromRgb(255, 175, 30)), null, new Rect(126, 13, 8, 7), 2.5, 2.5);
+            // фары светят вперёд
+            dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb(120, 255, 247, 194), Color.FromArgb(0, 255, 247, 194)), null, new Point(178, 66), 26, 14);
+            foreach (Part p in truck) Draw(dc, p);
+            double[] wx = { 34, 70, 146 };
+            foreach (double cx in wx) Wheel(dc, cx, 88, 15, t * 420);
+            // сугроб перед отвалом
+            double ps = Math.Min(1.4, Math.Sqrt(Math.Max(0, pile)) / 10);
+            if (ps > 0.05)
+            {
+                StreamGeometry g = new StreamGeometry();
+                using (StreamGeometryContext c = g.Open())
+                {
+                    c.BeginFigure(new Point(198, 92), true, true);
+                    c.BezierTo(new Point(204, 92 - 22 * ps), new Point(218, 92 - 30 * ps), new Point(226, 92 - 16 * ps), true, false);
+                    c.BezierTo(new Point(236, 92 - 22 * ps), new Point(246, 92 - 10 * ps), new Point(248, 92), true, false);
+                }
+                dc.DrawGeometry(Brushes.White, new Pen(new SolidColorBrush(Color.FromArgb(150, 190, 210, 235)), 1), g);
+            }
+            dc.Pop(); dc.Pop();
+        }
+
         public void DrawTractor(DrawingContext dc, double x, double groundY, double t)
         {
             double y = groundY - 4;
@@ -1134,13 +1260,173 @@ namespace SnowDesk
         void Wheel(DrawingContext dc, double cx, double cy, double r, double deg)
         {
             dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(30, 30, 34)), null, new Point(cx, cy), r, r);
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(250, 200, 60)), null, new Point(cx, cy), r * 0.45, r * 0.45);
+            dc.DrawEllipse(new LinearGradientBrush(Color.FromRgb(240, 243, 248), Color.FromRgb(141, 152, 168), 0), null, new Point(cx, cy), r * 0.52, r * 0.52);
             Pen p = new Pen(new SolidColorBrush(Color.FromRgb(70, 70, 76)), 2.4);
             for (int k = 0; k < 6; k++)
             {
                 double a = (deg + k * 60) * Math.PI / 180;
                 dc.DrawLine(p, new Point(cx + Math.Cos(a) * r * 0.62, cy + Math.Sin(a) * r * 0.62), new Point(cx + Math.Cos(a) * r * 0.95, cy + Math.Sin(a) * r * 0.95));
             }
+        }
+    }
+
+
+    // ---------- панель управления (как у Flake) ----------
+    class Panel : Window
+    {
+        List<Action> refresh = new List<Action>();
+        DateTime hiddenAt = DateTime.MinValue;
+        static Brush B(string hex) { SolidColorBrush b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); b.Freeze(); return b; }
+        static readonly Brush On = B("#3b82f6"), Off = B("#22ffffff"), OffHover = B("#38ffffff"), Txt = B("#f1f5ff"), Sub = B("#8fa3c7");
+
+        public Panel(World w, Action quit)
+        {
+            Settings S = w.S;
+            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+            Topmost = true; ShowInTaskbar = false; ResizeMode = ResizeMode.NoResize; Width = 380; SizeToContent = SizeToContent.Height;
+            FontFamily = new FontFamily("Segoe UI");
+            Deactivated += delegate { hiddenAt = DateTime.Now; Hide(); };
+
+            StackPanel root = new StackPanel();
+            System.Windows.Controls.Border card = new System.Windows.Controls.Border();
+            card.CornerRadius = new CornerRadius(20);
+            card.Padding = new Thickness(18, 14, 18, 16);
+            card.Margin = new Thickness(12);
+            card.Background = new LinearGradientBrush((Color)ColorConverter.ConvertFromString("#F0233150"), (Color)ColorConverter.ConvertFromString("#F0121a2c"), 90);
+            card.BorderBrush = B("#33ffffff"); card.BorderThickness = new Thickness(1);
+            card.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 24, ShadowDepth = 4, Opacity = 0.45 };
+            card.Child = root;
+            Content = card;
+
+            System.Windows.Controls.DockPanel head = new System.Windows.Controls.DockPanel();
+            System.Windows.Controls.TextBlock close = Text("✕", 16, Sub);
+            close.Cursor = System.Windows.Input.Cursors.Hand;
+            close.MouseLeftButtonUp += delegate { Hide(); };
+            System.Windows.Controls.DockPanel.SetDock(close, System.Windows.Controls.Dock.Right);
+            head.Children.Add(close);
+            StackPanel titles = new StackPanel();
+            titles.Children.Add(Text("❄  Снег", 22, Txt, FontWeights.Bold));
+            titles.Children.Add(Text("на рабочем столе", 12, Sub));
+            head.Children.Add(titles);
+            root.Children.Add(head);
+
+            Section(root, "СНЕГОПАД");
+            Row(root, new string[] { "Лёгкий", "Ровный", "Метель" }, delegate (int i) { return S.Level == i; }, delegate (int i) { w.SetLevel(i); S.Save(); });
+            Section(root, "КУРСОР");
+            Row(root, new string[] { "Не трогать", "🧤 Варежка", "⚪ Снежок", "Лопата" }, delegate (int i) { return S.Tool == i; }, delegate (int i) { S.Tool = i; S.Save(); });
+            root.Children.Add(Text("Варежка и лопата сметают снег, по которому ведёшь курсором. Снежок: веди курсор по сугробу — шар растёт, замри на секунду — шар встанет. Второй шар поставь на первый — будет снеговик.", 11, Sub, FontWeights.Normal, true));
+            Section(root, "ВЕТЕР");
+            Row(root, new string[] { "← Влево", "Штиль", "Порывы", "Вправо →" }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; return S.Wind == map[i]; }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; S.Wind = map[i]; S.Save(); });
+            Section(root, "ЧУДЕСА");
+            System.Windows.Controls.Primitives.UniformGrid acts = new System.Windows.Controls.Primitives.UniformGrid();
+            acts.Columns = 2;
+            acts.Children.Add(Big("⛄  Слепить снеговика", delegate { w.AutoSnowman(); }));
+            acts.Children.Add(Big("🚜  Снегоуборщик", delegate { w.CleanAll(); }));
+            acts.Children.Add(Big("🎅  Позвать Санту", delegate { w.CallSanta(); }));
+            acts.Children.Add(Big("☃  Растопить снеговиков", delegate { w.ClearSnowmen(); }));
+            root.Children.Add(acts);
+            Section(root, "НАСТРОЙКИ");
+            WrapPanel opts = new WrapPanel();
+            opts.Children.Add(Chip("💡 Гирлянда", delegate { return S.Garland; }, delegate { S.Garland = !S.Garland; S.Save(); }));
+            opts.Children.Add(Chip("🪟 Сугробы на окнах", delegate { return S.Windows; }, delegate { S.Windows = !S.Windows; S.Save(); }));
+            opts.Children.Add(Chip("❄ Снег поверх окон", delegate { return S.Over; }, delegate { S.Over = !S.Over; S.Save(); }));
+            opts.Children.Add(Chip("✨ Разлетается от мышки", delegate { return S.Mouse; }, delegate { S.Mouse = !S.Mouse; S.Save(); }));
+            opts.Children.Add(Chip("🦌 Санта сам прилетает", delegate { return S.Santa; }, delegate { S.Santa = !S.Santa; S.Save(); }));
+            opts.Children.Add(Chip("🚀 Запуск с Windows", Program.AutostartOn, delegate { Program.Autostart(!Program.AutostartOn()); }));
+            root.Children.Add(opts);
+            System.Windows.Controls.Primitives.UniformGrid bottom = new System.Windows.Controls.Primitives.UniformGrid();
+            bottom.Columns = 2; bottom.Margin = new Thickness(0, 12, 0, 0);
+            bottom.Children.Add(Chip("⏸ Пауза", delegate { return S.Paused; }, delegate
+            {
+                S.Paused = !S.Paused;
+                w.Front.Visibility = w.Back.Visibility = S.Paused ? Visibility.Hidden : Visibility.Visible;
+            }));
+            bottom.Children.Add(Big("Выход", delegate { quit(); }));
+            root.Children.Add(bottom);
+        }
+
+        public void Toggle()
+        {
+            if (IsVisible) { Hide(); return; }
+            if ((DateTime.Now - hiddenAt).TotalMilliseconds < 400) return;  // клик по значку сам закрыл панель
+            foreach (Action a in refresh) a();
+            Show();
+            UpdateLayout();
+            Rect wa = SystemParameters.WorkArea;
+            Left = wa.Right - ActualWidth - 4;
+            Top = wa.Bottom - ActualHeight - 4;
+            Activate();
+        }
+
+        static System.Windows.Controls.TextBlock Text(string t, double size, Brush fg, FontWeight? weight = null, bool wrap = false)
+        {
+            System.Windows.Controls.TextBlock b = new System.Windows.Controls.TextBlock();
+            b.Text = t; b.FontSize = size; b.Foreground = fg;
+            if (weight.HasValue) b.FontWeight = weight.Value;
+            if (wrap) { b.TextWrapping = TextWrapping.Wrap; b.Margin = new Thickness(2, 6, 2, 0); }
+            return b;
+        }
+
+        static void Section(StackPanel root, string t)
+        {
+            System.Windows.Controls.TextBlock b = Text(t, 11, Sub, FontWeights.SemiBold);
+            b.Margin = new Thickness(2, 14, 0, 6);
+            root.Children.Add(b);
+        }
+
+        System.Windows.Controls.Border Pill(string text, double pad)
+        {
+            System.Windows.Controls.Border b = new System.Windows.Controls.Border();
+            b.CornerRadius = new CornerRadius(12);
+            b.Padding = new Thickness(pad, 7, pad, 7);
+            b.Margin = new Thickness(0, 0, 6, 6);
+            b.Cursor = System.Windows.Input.Cursors.Hand;
+            System.Windows.Controls.TextBlock t = Text(text, 13, Txt);
+            t.HorizontalAlignment = HorizontalAlignment.Center;
+            b.Child = t;
+            return b;
+        }
+
+        void Row(StackPanel root, string[] names, Func<int, bool> on, Action<int> click)
+        {
+            System.Windows.Controls.Primitives.UniformGrid g = new System.Windows.Controls.Primitives.UniformGrid();
+            g.Columns = names.Length;
+            for (int i = 0; i < names.Length; i++)
+            {
+                int v = i;
+                System.Windows.Controls.Border b = Pill(names[i], 4);
+                Action upd = delegate { b.Background = on(v) ? On : Off; };
+                refresh.Add(upd);
+                b.MouseEnter += delegate { if (!on(v)) b.Background = OffHover; };
+                b.MouseLeave += delegate { upd(); };
+                b.MouseLeftButtonUp += delegate { click(v); foreach (Action a in refresh) a(); };
+                upd();
+                g.Children.Add(b);
+            }
+            root.Children.Add(g);
+        }
+
+        System.Windows.Controls.Border Chip(string text, Func<bool> on, Action click)
+        {
+            System.Windows.Controls.Border b = Pill(text, 12);
+            Action upd = delegate { b.Background = on() ? On : Off; };
+            refresh.Add(upd);
+            b.MouseEnter += delegate { if (!on()) b.Background = OffHover; };
+            b.MouseLeave += delegate { upd(); };
+            b.MouseLeftButtonUp += delegate { click(); foreach (Action a in refresh) a(); };
+            upd();
+            return b;
+        }
+
+        System.Windows.Controls.Border Big(string text, Action click)
+        {
+            System.Windows.Controls.Border b = Pill(text, 8);
+            b.Padding = new Thickness(8, 10, 8, 10);
+            b.Background = B("#2a3b63");
+            b.MouseEnter += delegate { b.Background = B("#36508a"); };
+            b.MouseLeave += delegate { b.Background = B("#2a3b63"); };
+            b.MouseLeftButtonUp += delegate { click(); };
+            return b;
         }
     }
 
@@ -1165,7 +1451,7 @@ namespace SnowDesk
             return SD.Icon.FromHandle(b.GetHicon());
         }
 
-        static void Autostart(bool on)
+        public static void Autostart(bool on)
         {
             using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
             {
@@ -1175,7 +1461,7 @@ namespace SnowDesk
             }
         }
 
-        static bool AutostartOn()
+        public static bool AutostartOn()
         {
             using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 return k != null && k.GetValue("SnowDesk") != null;
@@ -1228,13 +1514,16 @@ namespace SnowDesk
 
             WF.ContextMenuStrip menu = new WF.ContextMenuStrip();
             menu.Font = new SD.Font("Segoe UI", 10f);
+            Panel panel = null;
+            menu.Items.Add(Item("⚙  Открыть панель снега", delegate { if (panel != null) panel.Toggle(); }));
+            menu.Items.Add(new WF.ToolStripSeparator());
             menu.Items.Add(Radio("❄  Снегопад", new string[] { "Лёгкий", "Ровный", "Метель" }, delegate { return S.Level; }, delegate (int v) { w.SetLevel(v); S.Save(); }));
             menu.Items.Add(Radio("🌬  Ветер", new string[] { "Порывами", "Штиль", "← Влево", "Вправо →" }, delegate { return S.Wind; }, delegate (int v) { S.Wind = v; S.Save(); }));
-            menu.Items.Add(Radio("🖐  Курсор", new string[] { "Ничего не трогает", "🧤 Варежка — сметать снег", "⚪ Снежок — катать шары" }, delegate { return S.Tool; }, delegate (int v) { S.Tool = v; S.Save(); }));
+            menu.Items.Add(Radio("🖐  Курсор", new string[] { "Ничего не трогает", "🧤 Варежка — сметать снег", "⚪ Снежок — катать шары", "Лопата — сгребать много" }, delegate { return S.Tool; }, delegate (int v) { S.Tool = v; S.Save(); }));
             menu.Items.Add(new WF.ToolStripSeparator());
             menu.Items.Add(Item("⛄  Слепить снеговика", delegate { w.AutoSnowman(); }));
-            menu.Items.Add(Item("🧹  Лопата — убрать весь снег", delegate { w.Shovel(); }));
-            menu.Items.Add(Item("🚜  Позвать трактор", delegate { w.Tractor(); }));
+            menu.Items.Add(Item("🚜  Снегоуборщик — убрать снег", delegate { w.CleanAll(); }));
+            menu.Items.Add(Item("🧹  Убрать весь снег мгновенно", delegate { w.Shovel(); }));
             menu.Items.Add(Item("🎅  Позвать Санту", delegate { w.CallSanta(); }));
             menu.Items.Add(Item("☃  Убрать снеговиков", delegate { w.ClearSnowmen(); }));
             menu.Items.Add(new WF.ToolStripSeparator());
@@ -1257,11 +1546,10 @@ namespace SnowDesk
             tray.Text = "Снег на рабочем столе";
             tray.ContextMenuStrip = menu;
             tray.Visible = true;
+            panel = new Panel(w, delegate { tray.Visible = false; app.Shutdown(); });
             tray.MouseClick += delegate (object o, WF.MouseEventArgs e)
             {
-                if (e.Button != WF.MouseButtons.Left) return;
-                System.Reflection.MethodInfo mi = typeof(WF.NotifyIcon).GetMethod("ShowContextMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-                if (mi != null) mi.Invoke(tray, null);
+                if (e.Button == WF.MouseButtons.Left) panel.Toggle();
             };
 
             w.Back.Show();
@@ -1271,7 +1559,7 @@ namespace SnowDesk
             timer.Tick += delegate { w.Step(); };
             timer.Start();
             if (S.Tips)
-                tray.ShowBalloonTip(8000, "❄ Снег пошёл!", "Меню — значок снежинки у часов. Курсором можно сметать снег, а в режиме «Снежок» — катать шары и лепить снеговика ⛄", WF.ToolTipIcon.Info);
+                tray.ShowBalloonTip(8000, "❄ Снег пошёл!", "Нажми на снежинку у часов — откроется панель: снегопад, варежка, снежки, лопата, снегоуборщик, Санта ⛄", WF.ToolTipIcon.Info);
             app.Run();
             tray.Visible = false;
             GC.KeepAlive(mtx);
@@ -1291,4 +1579,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Снег пошёл ❄  Меню — значок снежинки у часов. Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
+Write-Host 'Готово! Снег пошёл ❄  Нажми на снежинку у часов — откроется панель. Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
