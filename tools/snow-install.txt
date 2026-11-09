@@ -822,7 +822,7 @@ namespace SnowDesk
             if (!masked) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
             if (S.Fps)
             {
-                FormattedText ft = new FormattedText("FPS " + fps + "  окон " + caps.Count, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White);
+                FormattedText ft = new FormattedText("FPS " + fps + "  окон " + caps.Count, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White, Scale);
                 dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)), null, new Rect(8, 40, ft.Width + 16, ft.Height + 8), 6, 6);
                 dc.DrawText(ft, new Point(16, 44));
             }
@@ -1643,9 +1643,9 @@ foreach ($n in $names) { Add-Type -AssemblyName $n }
 $refs = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $names -contains $_.GetName().Name } | ForEach-Object { $_.Location }
 $exe = "$dir\SnowDesk.exe"
 Remove-Item $exe -ErrorAction SilentlyContinue
-try { Add-Type -Path "$dir\Snow.cs" -ReferencedAssemblies $refs -OutputAssembly $exe -OutputType WindowsApplication -ErrorAction Stop }
+try { Add-Type -Path "$dir\Snow.cs" -ReferencedAssemblies $refs -OutputAssembly $exe -OutputType WindowsApplication -IgnoreWarnings -ErrorAction Stop }
 catch { Write-Host "Не собралось: $($_.Exception.Message)" -ForegroundColor Red; Write-Host 'Пришли этот текст Claude.'; return }
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Снег пошёл ❄  Нажми на снежинку у часов — откроется панель. Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
+Write-Host 'Готово! Версия 3. Снег пошёл ❄  Панель — синяя снежинка у часов (в стрелочке ^). Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
