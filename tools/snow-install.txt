@@ -76,7 +76,7 @@ namespace SnowDesk
 
     class Settings
     {
-        public int Level = 1, Tool = 1, Wind = 0, Render = 0;   // Render: 0 надёжный (видеокарта), 1 надёжный (процессор), 2 быстрый
+        public int Level = 1, Tool = 1, Wind = 0, Render = 0, Plow = 2;   // Plow: 0 сам не ездит, 1 — 5 мин, 2 — 15 мин, 3 — 30 мин   // Render: 0 надёжный (видеокарта), 1 надёжный (процессор), 2 быстрый
         public bool Compat { get { return Render != 2; } }
         public bool FastFailed;       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
         public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true, Fps = false;
@@ -108,6 +108,7 @@ namespace SnowDesk
                         case "render": Render = Math.Max(0, Math.Min(2, v)); break;
                         case "fastfailed": FastFailed = v == 1; break;
                         case "fps": Fps = v == 1; break;
+                        case "plow": Plow = Math.Max(0, Math.Min(3, v)); break;
                         case "ver": ver = v; break;
                     }
                 }
@@ -122,7 +123,7 @@ namespace SnowDesk
             {
                 File.WriteAllLines(path, new string[] {
                     "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "render=" + Render, "fastfailed=" + (FastFailed ? 1 : 0), "fps=" + (Fps ? 1 : 0), "ver=" + ver });
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "render=" + Render, "fastfailed=" + (FastFailed ? 1 : 0), "fps=" + (Fps ? 1 : 0), "plow=" + Plow, "ver=" + ver });
             }
             catch { }
         }
@@ -278,7 +279,7 @@ namespace SnowDesk
         double[] ground;
         const double COL = 4, MAXG = 70;
         double groundY, wind, windTarget, nextGust, time;
-        double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta, plowPile;
+        double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta, plowPile, nextPlow;
         double mx = -9999, my = -9999, pmx, pmy, mSpeed;
         bool hidden, tipSnowball;
         int tick, frames, fps;
@@ -444,9 +445,15 @@ namespace SnowDesk
 
             StepFlakes(dt);
             Settle();
-            if (S.Tool == 1) Mitten(dt, mdx, 4, 0.35, 1);
-            if (S.Tool == 3) Mitten(dt, mdx, 9, 0.9, 2.2);
-            if (S.Tool == 2) Snowball(dt, mdx);
+            // как во Flake: зажал кнопку на снегу — катаешь ком (любым инструментом)
+            if (S.Tool != 0) Snowball(dt, mdx);
+            if (rolling == null)
+            {
+                if (S.Tool == 1) Mitten(dt, mdx, 4, 0.35, 1, mx, my);
+                if (S.Tool == 3) { ShovelPose(); if (shovelIn) Mitten(dt, mdx, 8, 0.9, 2.2, tipX, tipY - 4); }
+            }
+            int[] plowMin = { 0, 5, 15, 30 };
+            if (S.Plow > 0 && time > nextPlow) { if (nextPlow > 0) Tractor(); nextPlow = time + plowMin[S.Plow] * 60; }
             StepChunks(dt);
             StepTractor(dt);
             StepMen(dt);
@@ -531,18 +538,46 @@ namespace SnowDesk
 
         // варежка: проводишь курсором по сугробу — снег разлетается
         // варежка и лопата: проводишь курсором по снегу — он разлетается
-        void Mitten(double dt, double mdx, int reach, double power, double chunk)
+        void Mitten(double dt, double mdx, int reach, double power, double chunk, double px, double py)
         {
             if (mSpeed < 40) return;
             double amount = Math.Min(4 + power * 6, mSpeed * dt * power);
-            double top = groundY - GroundAt(mx);
-            if (my > top - 18 && my < groundY + 6) SweepCols(ground, 0, mx, amount, mdx, groundY, reach, chunk);
+            double top = groundY - GroundAt(px);
+            if (py > top - 18 && py < groundY + 6) SweepCols(ground, 0, px, amount, mdx, groundY, reach, chunk);
             foreach (Cap c in caps.Values)
             {
-                if (mx < c.L - 10 || mx > c.R + 10) continue;
-                double h = Math.Max(0, CapAt(c, mx));
-                if (my > c.T - h - 18 && my < c.T + 8) SweepCols(c.H, c.L, mx, amount, mdx, c.T, reach, chunk);
+                if (px < c.L - 10 || px > c.R + 10) continue;
+                double h = Math.Max(0, CapAt(c, px));
+                if (py > c.T - h - 18 && py < c.T + 8) SweepCols(c.H, c.L, px, amount, mdx, c.T, reach, chunk);
             }
+        }
+
+        // лопата: курсор держит черенок, ковш опускается и упирается в снег под курсором
+        public double tipX, tipY, shovelAng, shovelDir = 1; bool shovelIn;
+        const double SHOVEL = 122 * 0.6;
+        void ShovelPose()
+        {
+            if (Math.Abs(mx - pmx) > 0.5) shovelDir = mx > pmx ? 1 : -1;
+            double surf = groundY - GroundAt(mx);
+            foreach (Cap c in caps.Values)
+            {
+                if (mx < c.L || mx > c.R) continue;
+                double ch = CapAt(c, mx);
+                if (ch < 0) continue;
+                double cy = c.T - ch;
+                if (cy > my - 10 && cy < surf) surf = cy;
+            }
+            double dv = surf - my, want;
+            if (dv >= SHOVEL) { want = 0; shovelIn = false; }
+            else
+            {
+                double a = Math.Acos(Math.Max(0.45, dv / SHOVEL));   // не больше ~63°
+                want = a * 180 / Math.PI * -shovelDir;   // ковш уходит вперёд по ходу движения
+                shovelIn = true;
+            }
+            shovelAng += (want - shovelAng) * 0.35;
+            double rad = shovelAng * Math.PI / 180;
+            tipX = mx - Math.Sin(rad) * SHOVEL; tipY = my + Math.Cos(rad) * SHOVEL;
         }
 
         void SweepCols(double[] h, double left, double x, double amount, double mdx, double baseY, int reach, double chunk)
@@ -668,7 +703,8 @@ namespace SnowDesk
             }
             if (best != null)
             {
-                best.R.Add(Math.Min(r, best.R[best.R.Count - 1] * 1.05));
+                double below = best.R[best.R.Count - 1];
+                best.R.Add(Math.Max(below * 0.6, Math.Min(r, below * 0.8)));
                 best.DecorateAt = best.R.Count >= 3 ? time + 0.15 : time + 1.6;
                 best.WaveAt = time + 1;
                 Sparkle(best.X, TopY(best), 16);
@@ -724,7 +760,7 @@ namespace SnowDesk
         {
             if (double.IsNaN(tractorX)) return;
             tractorX += 190 * dt;
-            double plow = tractorX + 162;
+            double plow = tractorX + 218 * 0.8;
             int i0 = (int)(plow / COL);
             for (int k = 0; k < 6; k++)
             {
@@ -781,7 +817,7 @@ namespace SnowDesk
             if (double.IsNaN(santaX)) return;
             santaX -= 240 * dt;
             if (rnd.NextDouble() < 0.9)
-                sparks.Add(new Spark { X = santaX + 0.85 * 440, Y = santaY + 0.85 * 100 + (rnd.NextDouble() - 0.5) * 14, Vx = 40 + rnd.NextDouble() * 40, Vy = (rnd.NextDouble() - 0.3) * 30, Life = 1.2 + rnd.NextDouble(), Max = 2.2 });
+                sparks.Add(new Spark { X = santaX + 0.85 * 490, Y = santaY + 0.85 * 100 + (rnd.NextDouble() - 0.5) * 14, Vx = 40 + rnd.NextDouble() * 40, Vy = (rnd.NextDouble() - 0.3) * 30, Life = 1.2 + rnd.NextDouble(), Max = 2.2 });
             if (santaX < -520) { santaX = double.NaN; nextSanta = time + 420 + rnd.NextDouble() * 600; }
         }
 
@@ -861,7 +897,7 @@ namespace SnowDesk
                     Cap c;
                     if (!caps.TryGetValue(h, out c) || Math.Abs(c.L - L) > 1 || Math.Abs(c.T - T) > 1 || Math.Abs(c.R - R) > 1)
                     {
-                        if (c != null) { Crumble(c); DropMen(h); }
+                        if (c != null) { Crumble(c); DropMen(h); if (rolling != null && rolling.Anchor == h && !carrying) { rolling = null; wasDown = true; } }
                         c = new Cap { L = L, T = T, R = R, H = new double[(int)((R - L) / COL) + 1] };
                         caps[h] = c;
                     }
@@ -905,6 +941,7 @@ namespace SnowDesk
         }
 
         // ---------- команды из меню ----------
+        public void ResetPlow() { nextPlow = 0; }
         public void Tractor() { if (double.IsNaN(tractorX)) { tractorX = -220; plowPile = 0; } }
 
         public void CleanAll()  // машина чистит низ, с окон снег осыпается
@@ -989,7 +1026,7 @@ namespace SnowDesk
                 double tilt = Math.Max(-25, Math.Min(25, (mx - pmx) * 1.5));
                 dc.PushOpacity(toolFade);
                 if (S.Tool == 1) art.DrawMitten(dc, mx, my, tilt);
-                else if (S.Tool == 3) art.DrawShovel(dc, mx, my, tilt);
+                else if (S.Tool == 3) art.DrawShovel(dc, mx, my, shovelAng);
                 else if (S.Tool == 2) DrawBall(dc, mx + 14, my + 16, 7, time * 60);
                 dc.Pop();
             }
@@ -1465,6 +1502,109 @@ namespace SnowDesk
         static double Ease(double t) { t = Clamp(t); return 1 - Math.Pow(1 - t, 3); }
     }
 
+    static class ArtData
+    {
+        public const string DeerFarF = @"P M 46 62 C 40 70 32 77 25 81 L 22 82 C 19 83 19 87 22 87 L 26 86 C 34 83 43 77 52 68 Z|L 0 0 0 1 #ff8a5a33@0 #ff5e3a1d@1|-|1|F
+P M 22 82 L 17 84 L 19 88 L 24 87 Z|#ff2b1a10|-|1|F";
+        public const string DeerFarB = @"P M 92 62 C 99 70 107 77 114 80 L 117 81 C 120 82 120 86 117 86 L 113 85 C 104 82 96 76 87 68 Z|L 0 0 0 1 #ff8a5a33@0 #ff5e3a1d@1|-|1|F
+P M 117 81 L 122 82 L 121 86 L 116 86 Z|#ff2b1a10|-|1|F";
+        public const string DeerBody = @"P M 101 45 C 107 39 113 41 111 47 C 109 51 104 50 101 49 Z|L 0 0 0 1 #fffbf0dc@0 #ffe6cfa8@1|-|1|F
+P M 32 52 C 32 40 48 33 68 34 C 88 35 103 41 104 53 C 105 64 95 71 79 71 L 52 71 C 40 71 32 64 32 52 Z|L 0 0 0 1 #ffc99766@0 #ffa06a3e@.55 #ff7a4a26@1|-|1|F
+P M 44 63 C 56 71 82 72 97 63 C 93 70 85 73 77 73 L 54 73 C 48 73 45 68 44 63 Z|L 0 0 0 1 #fffbf0dc@0 #ffe6cfa8@1 O0.9|-|1|F
+P M 48 38 C 62 35 82 36 96 42|-|#38ffffff|3|R
+P M 28 50 C 24 42 22 34 23 26 L 37 23 C 39 31 41 39 45 46 Z|L 0 0 0 1 #ffc99766@0 #ffa06a3e@.55 #ff7a4a26@1|-|1|F
+E 37 53 7 9.5|L 0 0 0 1 #fffbf0dc@0 #ffe6cfa8@1 O0.85|-|1|F
+P M 23 12 C 21 5 22 -2 26 -8 M 22 4 C 18 2 16 -2 16 -6|-|#ffc9a873|2.4|R
+P M 37 22 C 37 13 30 8 21 9 C 14 10 8 14 4 19 C 1 22 2 27 6 28 L 15 29 C 21 31 29 31 33 29 C 36 27 37 25 37 22 Z|L 0 0 0 1 #ffc99766@0 #ffa06a3e@.55 #ff7a4a26@1|-|1|F
+E 8 23.5 6.5 5|#ffdcb68e|-|1|F
+P M 5 27 C 8 29 12 29 14 28|-|#ff6b4423|1|R
+P M 29 12 C 33 6 40 5 42 8 C 39 13 34 15 30 15 Z|#ffa06a3e|-|1|F
+P M 31 12.5 C 34 9.5 38 8.5 40 9.5 C 37 11.5 35 12.5 31 12.5 Z|#fff0c9a4|-|1|F
+P M 26 10 C 25 3 27 -5 33 -11 M 28 1 C 23 -2 21 -6 22 -11 M 30 -5 C 34 -8 37 -8 40 -12 M 26 5 C 31 2 36 1 39 -3|-|L 0 0 0 1 #fff3e3c3@0 #ffcfae7a@1|2.8|R
+E 19.5 17 2.1 2.5|#ff1b0f08|-|1|F
+E 20.3 16.1 .8 .8|#ffffffff|-|1|F
+P M 17 13.6 C 18.5 12.6 20.5 12.6 22 13.4|-|#ff4a2c14|.9|R
+P M 26 40 C 29 46 35 49 44 48|-|#ffd62839|4.2|R
+E 30 45.5 2.7 2.7|G .35 .3 .8 .35 .3 #fffff6c4@0 #fff6c64a@.5 #ffb8860b@1|-|1|F
+E 36 48.5 2.7 2.7|G .35 .3 .8 .35 .3 #fffff6c4@0 #fff6c64a@.5 #ffb8860b@1|-|1|F
+E 42 48.8 2.4 2.4|G .35 .3 .8 .35 .3 #fffff6c4@0 #fff6c64a@.5 #ffb8860b@1|-|1|F
+P M 60 35 C 58 47 59 60 61 71|-|#ffd62839|4|R
+R 56.5 50 7 6 1.5|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|-|1|F
+P M 44 48 C 60 47 80 47 104 50|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|1.6|F";
+        public const string DeerNearF = @"P M 42 61 C 35 67 27 71 19 73 L 16 73 C 13 73 13 77 16 78 L 20 78 C 29 77 39 73 48 67 Z|L 0 0 0 1 #ffc99766@0 #ffa06a3e@.55 #ff7a4a26@1|-|1|F
+P M 16 73 L 11 74 L 12 78 L 17 78 Z|#ff2b1a10|-|1|F";
+        public const string DeerNearB = @"P M 88 61 C 96 67 105 71 113 72 L 116 72 C 119 72 119 76 116 77 L 112 77 C 103 76 94 72 84 67 Z|L 0 0 0 1 #ffc99766@0 #ffa06a3e@.55 #ff7a4a26@1|-|1|F
+P M 116 72 L 121 73 L 120 77 L 115 77 Z|#ff2b1a10|-|1|F";
+        public const string Sleigh = @"P M 106 50 C 98 30 106 10 124 8 C 142 7 150 22 147 40 C 145 52 130 57 114 55 Z|L 0 0 1 1 #ffc49260@0 #ff6e4c2a@1|-|1|F
+P M 116 12 C 119 6 126 5 130 9|-|#ff4a3018|2|R
+R 112 16 15 13 2|#ff2f9e5a|-|1|F
+P M 119.5 16 V 29 M 112 22.5 H 127|#ff000000|#fff6c64a|2.2|F
+R 129 21 12 11 2|#ff3a7fe0|-|1|F
+P M 135 21 V 32|#ff000000|#ffffffff|1.8|F
+R 121 5 10 9 1.5|#ffe63946|-|1|F
+P M 126 5 V 14 M 121 9.5 H 131|#ff000000|#ffffe08a|1.6|F
+P M 66 30 C 58 34 50 37 43 38|-|L 0 0 1 1 #ffff5a5a@0 #ffb3141c@1|7.5|R
+E 41 38 4.2 4.2|#ff2f9e5a|-|1|F
+P M 58 58 C 54 37 62 22 79 21 C 96 20 104 35 101 58 Z|L 0 0 1 1 #ffff5a5a@0 #ffb3141c@1|-|1|F
+R 59 45 41 6 2|#ff1e1e24|-|1|F
+R 75.5 43.5 9 9 1.5|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|2|F
+P M 79.5 24 L 79.5 43|#ff000000|#ffffffff|5.5|R
+P M 64 15 C 59 26 62 39 72 43 C 76 45 83 45 87 43 C 96 37 96 24 91 14 C 85 19 70 19 64 15 Z|L 0 0 0 1 #ffffffff@0 #ffdfe6ef@1|-|1|F
+E 77.5 10 9 9|G .4 .35 .7 .4 .35 #ffffe6d2@0 #fff6c3a0@1|-|1|F
+E 71.5 13 2.8 2|#8cff8f8f|-|1|F
+E 84 13 2.8 2|#8cff8f8f|-|1|F
+P M 71.5 9 Q 73.5 7 75.5 9 M 80 9 Q 82 7 84 9|-|#ff3a2416|1.4|R
+P M 70.5 6 Q 73.5 4 76.5 5.5 M 79 5.5 Q 82 4 85 6|-|#ffffffff|1.8|R
+E 78 12.5 2.5 2.5|#fff19a84|-|1|F
+P M 70 17 C 73 14 77 14.5 78 16 C 79 14.5 83 14 86 17 C 83 20 79 19.5 78 18 C 77 19.5 73 20 70 17 Z|#ffffffff|-|1|F
+P M 67 4 C 68 -8 83 -13 95 -7 C 103 -3 108 5 111 12 C 105 8 99 6 92 5 Z|L 0 0 1 1 #ffff5a5a@0 #ffb3141c@1|-|1|F
+P M 66 5 C 72 1 84 1 92 5|-|#ffffffff|5.5|R
+E 111.5 13.5 4.5 4.5|L 0 0 0 1 #ffffffff@0 #ffdfe6ef@1|-|1|F
+P M 14 58 C 10 72 18 86 36 88 L 124 88 C 136 88 144 78 144 64 L 144 30 C 144 22 138 18 132 22 C 128 40 118 54 102 56 L 34 56 C 26 56 18 52 14 58 Z|L 0 0 0 1 #ffff4a52@0 #ffd11f2c@.6 #ff8e0f16@1|-|1|F
+P M 22 60 C 40 62 80 62 122 58|-|#47ffffff|3|R
+P M 20 66 C 26 78 40 80 52 80 L 122 80 C 131 80 136 74 137 64|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|2.6|R
+P M 70 70 C 76 63 86 63 90 70 C 86 74 79 74 77 70 M 98 70 C 104 63 114 63 118 70 C 114 74 107 74 105 70|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|1.6|R
+P M 14 58 C 6 52 6 42 14 40 C 20 39 22 46 17 48|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|2.8|R
+P M 132 22 C 128 14 134 8 140 12 C 144 15 142 21 138 21|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|2.8|R
+P M 30 88 L 28 98 M 114 88 L 116 98|#ff000000|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|3.2|R
+P M 10 98 L 132 98 C 144 98 148 90 144 84|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|3.4|R
+P M 10 98 C -2 98 -6 88 0 82 C 4 78 10 80 9 86|-|L 0 0 1 1 #fffff1a8@0 #fff2c14e@.5 #ffb98618@1|3.4|R";
+        public const string Truck = @"R 104 6 6 34 2|L 0 0 1 1 #fff4f6fa@0 #ff8d98a8@1|-|1|F
+R 102.5 4 9 5 2|#ff3a3f48|-|1|F
+R 10 80 182 9 2|#ff2a2e35|-|1|F
+P M 12 82 L 12 44 C 12 40 15 37 19 37 L 102 37 L 102 82 Z|L 0 0 0 1 #ffffb23e@0 #ffff8a14@.5 #ffd9600a@1|-|1|F
+P M 30 40 V 80 M 50 40 V 80 M 70 40 V 80 M 90 40 V 80|#ff000000|#b2c45508|2|F
+P M 12 48 L 102 48|#ff000000|#4cffffff|2.5|F
+R 13 58 6 18 1|#ffffffff|-|1|F
+P M 13 62 L 19 58 M 13 68 L 19 64 M 13 74 L 19 70|#ff000000|#ffe63946|2.4|F
+P M 14 38 C 22 27 38 29 48 33 C 58 24 80 27 100 37 Z|L 0 0 0 1 #ffffffff@0 #ffdbe7f5@1|-|1|F
+P M 106 82 L 106 34 C 106 26 111 20 119 20 L 156 20 C 162 20 166 23 168 28 L 178 52 L 186 55 C 190 57 192 60 192 64 L 192 82 Z|L 0 0 0 1 #ffffb23e@0 #ffff8a14@.5 #ffd9600a@1|-|1|F
+P M 106 30 C 110 23 116 21 124 21 L 154 21|-|#59ffffff|2.5|R
+P M 114 28 L 154 28 C 157 28 159 30 160 32 L 169 53 L 114 53 Z|L 0 0 1 1 #ffe3f6ff@0 #ff8cc8ef@.6 #ff4c8fc4@1|-|1|F
+P M 118 30 L 131 30 L 123 51 L 116 51 Z|#61ffffff|-|1|F
+P M 137 28 L 137 53|#ff000000|#ffe8740c|3|F
+E 148 40 5 5|#8c1f2a3a|-|1|F
+P M 142 53 C 142 47 154 47 154 53 Z|#8c1f2a3a|-|1|F
+P M 137 57 L 137 80 M 110 57 L 110 80|#ff000000|#ffc45508|1.5|F
+R 124 60 9 3 1.5|#ff2a2e35|-|1|F
+R 176 70 20 10 2|#ff2a2e35|-|1|F
+E 187 62 4.2 4.2|#fffffbd6|-|1|F
+E 187 62 2 2|#ffffffff|-|1|F
+P M 192 68 L 206 68 M 192 77 L 206 81|#ff000000|#ff3a3f48|5|R
+P M 202 44 C 216 51 223 68 221 98 L 202 98 C 206 83 207 64 199 51 Z|L 0 0 1 0 #ffffe066@0 #ffffc414@.6 #ffd89a00@1|-|1|F
+P M 205 55 L 215 61 M 207 67 L 218 72 M 208 79 L 219 83 M 208 90 L 219 93|#ff000000|#8c1d2026|3|R
+P M 201 98 L 223 98|#ff000000|#ffe8edf5|3.4|R
+P M 21 93 A 19 19 0 0 1 59 93 M 59 93 A 19 19 0 0 1 97 93 M 141 93 A 19 19 0 0 1 179 93|-|#ff1d2026|4|F";
+        public const string Shovel = @"R 26.5 6 7 84 3.5|L 0 0 1 0 #ffd79b5c@0 #ffb27841@.5 #ff7f4f24@1|-|1|F
+P M 29 10 L 29 86|#ff000000|#4cffffff|1.6|R
+P M 16 2 C 16 -4 44 -4 44 2 L 44 9 L 16 9 Z|#ff2b2f36|-|1|F
+R 27 8 6 7 1|#ff2b2f36|-|1|F
+P M 24 86 L 36 86 L 37 92 L 23 92 Z|#ff3a3f48|-|1|F
+P M 12 92 C 12 88 48 88 48 92 L 52 120 C 52 125 8 125 8 120 Z|L 0 0 1 1 #ff8be0ff@0 #ff3ea2ee@.5 #ff1c6fc0@1|-|1|F
+P M 15 97 L 45 97|#ff000000|#59ffffff|3|R
+P M 8 120 C 8 125 52 125 52 120|-|#ffdfe8f3|2.4|R";
+    }
+
     // ---------- картинки: Санта с оленями, трактор ----------
     class Art
     {
@@ -1488,8 +1628,75 @@ namespace SnowDesk
         static Part E(double cx, double cy, double rx, double ry, Brush fill) { Geometry g = new EllipseGeometry(new Point(cx, cy), rx, ry); g.Freeze(); return new Part { G = g, Fill = fill }; }
         static Part R(double x, double y, double w, double h, double r, Brush fill) { Geometry g = new RectangleGeometry(new Rect(x, y, w, h), r, r); g.Freeze(); return new Part { G = g, Fill = fill }; }
 
+        // картинки хранятся строками: «фигура|заливка|обводка|толщина|концы» (сделано из SVG)
+        static double N(string v) { return double.Parse(v, System.Globalization.CultureInfo.InvariantCulture); }
+        static Brush Paint(string v)
+        {
+            if (v == "-") return null;
+            if (v[0] == '#') return S(v);
+            string[] t = v.Split(' ');
+            GradientBrush g;
+            int i;
+            if (t[0] == "L") { LinearGradientBrush l = new LinearGradientBrush(); l.StartPoint = new Point(N(t[1]), N(t[2])); l.EndPoint = new Point(N(t[3]), N(t[4])); g = l; i = 5; }
+            else { RadialGradientBrush rg = new RadialGradientBrush(); rg.Center = new Point(N(t[1]), N(t[2])); rg.RadiusX = rg.RadiusY = N(t[3]); rg.GradientOrigin = new Point(N(t[4]), N(t[5])); g = rg; i = 6; }
+            for (; i < t.Length; i++)
+            {
+                if (t[i].StartsWith("O")) { g.Opacity = N(t[i].Substring(1)); continue; }
+                string[] st = t[i].Split('@');
+                g.GradientStops.Add(new GradientStop(C(st[0]), N(st[1])));
+            }
+            g.Freeze(); return g;
+        }
+        static List<Part> Load(string data)
+        {
+            List<Part> res = new List<Part>();
+            foreach (string raw in data.Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0) continue;
+                try
+                {
+                    string[] f = line.Split('|');
+                    string[] sh = f[0].Split(new char[] { ' ' }, 2);
+                    Geometry g;
+                    if (sh[0] == "P") g = Geometry.Parse(sh[1]);
+                    else
+                    {
+                        string[] n = sh[1].Split(' ');
+                        if (sh[0] == "E") g = new EllipseGeometry(new Point(N(n[0]), N(n[1])), N(n[2]), N(n[3]));
+                        else g = new RectangleGeometry(new Rect(N(n[0]), N(n[1]), N(n[2]), N(n[3])), N(n[4]), N(n[4]));
+                    }
+                    g.Freeze();
+                    Brush stroke = Paint(f[2]);
+                    Pen pen = null;
+                    if (stroke != null)
+                    {
+                        pen = new Pen(stroke, N(f[3])); pen.LineJoin = PenLineJoin.Round;
+                        if (f[4] == "R") pen.StartLineCap = pen.EndLineCap = PenLineCap.Round;
+                        pen.Freeze();
+                    }
+                    res.Add(new Part { G = g, Fill = Paint(f[1]), Stroke = pen });
+                }
+                catch (Exception ex) { Program.Log(ex); }
+            }
+            return res;
+        }
+
+        List<Part> dFarF, dFarB, dBody, dNearF, dNearB, sleigh2, truck2, shovel2;
+        Pen reinPen; Geometry reinGeo; Brush wheelTire, wheelRim, lampOn, lampOff, lightBar, headGlow, pileFill; Pen wheelSpoke, pileEdge;
+
         public Art()
         {
+            dFarF = Load(ArtData.DeerFarF); dFarB = Load(ArtData.DeerFarB); dBody = Load(ArtData.DeerBody);
+            dNearF = Load(ArtData.DeerNearF); dNearB = Load(ArtData.DeerNearB);
+            sleigh2 = Load(ArtData.Sleigh); truck2 = Load(ArtData.Truck); shovel2 = Load(ArtData.Shovel);
+            reinPen = new Pen(Paint("L 0 0 1 1 #fffff1a8@0 #fff2c14e@0.5 #ffb98618@1"), 1.6); reinPen.Freeze();
+            reinGeo = Geometry.Parse("M 44 68 C 80 72 120 72 159 74 C 200 74 240 68 274 66 C 310 64 340 52 386 48"); reinGeo.Freeze();
+            wheelTire = S("#1f2228"); wheelRim = Paint("L 0 0 1 1 #fff4f6fa@0 #ff8d98a8@1");
+            wheelSpoke = new Pen(S("#3a3f48"), 2.4); wheelSpoke.Freeze();
+            lampOn = Paint("G 0.5 0.5 0.5 0.5 0.5 #f0ffc040@0 #00ff8a00@1"); lampOff = S("#ffb86a10"); lightBar = S("#ff2a2e35");
+            headGlow = Paint("G 0.5 0.5 0.5 0.5 0.5 #90fff7c2@0 #00fff7c2@1");
+            pileFill = Paint("L 0 0 0 1 #ffffffff@0 #ffdbe7f5@1"); pileEdge = new Pen(S("#96bed2eb"), 1); pileEdge.Freeze();
             Brush fur = V("#b98455", "#7a4f2c"), red = V("#ff4b4b", "#b3141c"), sled = V("#e5323a", "#8e0f16");
             Brush gold = D("#fff1a8", "#f2c14e", "#b98618"), sack = V("#a77a4a", "#6e4c2a");
             Brush belly = new LinearGradientBrush(Color.FromArgb(0, 0x7a, 0x4f, 0x2c), Color.FromArgb(204, 0xf1, 0xdc, 0xc0), new Point(0, 0), new Point(0, 1)); belly.Freeze();
@@ -1551,6 +1758,42 @@ namespace SnowDesk
         }
 
         public void DrawSanta(DrawingContext dc, double x, double y, double t)
+        {
+            dc.PushTransform(new TranslateTransform(x, y));
+            dc.PushTransform(new ScaleTransform(0.85, 0.85));
+            dc.DrawGeometry(null, reinPen, reinGeo);
+            double[] ox = { 0, 115, 230 }, oy = { 20, 26, 18 };
+            for (int i = 0; i < 3; i++)
+            {
+                double ph = Math.Sin(t * 9 + i * 0.8);
+                dc.PushTransform(new TranslateTransform(ox[i], oy[i] + ph * 2));
+                Leg(dc, dFarF, 44, 62, ph * 14 + 4);
+                Leg(dc, dFarB, 90, 62, -ph * 14 - 4);
+                foreach (Part p in dBody) Draw(dc, p);
+                Leg(dc, dNearF, 44, 62, ph * 16);
+                Leg(dc, dNearB, 90, 62, -ph * 16);
+                if (i == 0)
+                {
+                    double pulse = 9 + Math.Sin(t * 5) * 2.5;
+                    dc.DrawEllipse(noseGlow, null, new Point(3, 21), pulse, pulse);
+                    dc.DrawEllipse(noseRed, null, new Point(3, 21), 3.4, 3.4);
+                }
+                dc.Pop();
+            }
+            dc.PushTransform(new TranslateTransform(345, 10 + Math.Sin(t * 2.2) * 2.5));
+            foreach (Part p in sleigh2) Draw(dc, p);
+            dc.Pop();
+            dc.Pop(); dc.Pop();
+        }
+
+        void Leg(DrawingContext dc, List<Part> leg, double hx, double hy, double deg)
+        {
+            dc.PushTransform(new RotateTransform(deg, hx, hy));
+            foreach (Part p in leg) Draw(dc, p);
+            dc.Pop();
+        }
+
+        public void DrawSantaOld(DrawingContext dc, double x, double y, double t)
         {
             dc.PushTransform(new TranslateTransform(x, y));
             dc.PushTransform(new ScaleTransform(0.85, 0.85));
@@ -1636,15 +1879,60 @@ namespace SnowDesk
 
         public void DrawShovel(DrawingContext dc, double x, double y, double tilt)
         {
-            // середина ковша — у курсора, лопата чуть наклонена
-            dc.PushTransform(new TranslateTransform(x - 30 * 0.6, y - 112 * 0.6));
-            dc.PushTransform(new RotateTransform(-22 + tilt * 0.6, 30 * 0.6, 112 * 0.6));
+            // ручка — у курсора, ковш внизу упирается в снег
+            dc.PushTransform(new TranslateTransform(x - 30 * 0.6, y));
+            dc.PushTransform(new RotateTransform(tilt, 30 * 0.6, 0));
             dc.PushTransform(new ScaleTransform(0.6, 0.6));
-            foreach (Part p in shovel) Draw(dc, p);
+            foreach (Part p in shovel2) Draw(dc, p);
             dc.Pop(); dc.Pop(); dc.Pop();
         }
 
         public void DrawTruck(DrawingContext dc, double x, double groundY, double t, double pile)
+        {
+            const double sc = 0.8;
+            dc.PushTransform(new TranslateTransform(x, groundY - 110 * sc + 2 + Math.Sin(t * 18) * 0.5));
+            dc.PushTransform(new ScaleTransform(sc, sc));
+            dc.DrawEllipse(headGlow, null, new Point(214, 62), 34, 15);
+            bool on = ((int)(t * 4)) % 2 == 0;
+            dc.DrawRoundedRectangle(lightBar, null, new Rect(116, 13, 40, 7), 3, 3);
+            dc.DrawEllipse(lampOn, null, new Point(on ? 124 : 148, 16), 22, 22);
+            dc.DrawRoundedRectangle(on ? S("#ffffb020") : lampOff, null, new Rect(118, 14, 11, 5), 2, 2);
+            dc.DrawRoundedRectangle(on ? lampOff : S("#ffffb020"), null, new Rect(143, 14, 11, 5), 2, 2);
+            foreach (Part p in truck2) Draw(dc, p);
+            double[] wx = { 40, 78, 160 };
+            foreach (double cx in wx) Wheel2(dc, cx, 95, 15, t * 420);
+            double ps = Math.Min(1.4, Math.Sqrt(Math.Max(0, pile)) / 10);
+            if (ps > 0.05)
+            {
+                StreamGeometry g = new StreamGeometry();
+                using (StreamGeometryContext c = g.Open())
+                {
+                    c.BeginFigure(new Point(219, 99), true, true);
+                    c.BezierTo(new Point(225, 99 - 22 * ps), new Point(239, 99 - 30 * ps), new Point(247, 99 - 16 * ps), true, false);
+                    c.BezierTo(new Point(257, 99 - 22 * ps), new Point(267, 99 - 10 * ps), new Point(269, 99), true, false);
+                }
+                dc.DrawGeometry(pileFill, pileEdge, g);
+            }
+            dc.Pop(); dc.Pop();
+        }
+
+        void Wheel2(DrawingContext dc, double cx, double cy, double r, double deg)
+        {
+            dc.DrawEllipse(wheelTire, null, new Point(cx, cy), r, r);
+            dc.DrawEllipse(wheelRim, null, new Point(cx, cy), r * 0.55, r * 0.55);
+            for (int k = 0; k < 5; k++)
+            {
+                double a = (deg + k * 72) * Math.PI / 180;
+                dc.DrawLine(wheelSpoke, new Point(cx + Math.Cos(a) * r * 0.2, cy + Math.Sin(a) * r * 0.2), new Point(cx + Math.Cos(a) * r * 0.5, cy + Math.Sin(a) * r * 0.5));
+            }
+            for (int k = 0; k < 10; k++)   // протектор
+            {
+                double a = (deg + k * 36) * Math.PI / 180;
+                dc.DrawLine(wheelSpoke, new Point(cx + Math.Cos(a) * r * 0.8, cy + Math.Sin(a) * r * 0.8), new Point(cx + Math.Cos(a) * r * 0.98, cy + Math.Sin(a) * r * 0.98));
+            }
+        }
+
+        public void DrawTruckOld(DrawingContext dc, double x, double groundY, double t, double pile)
         {
             dc.PushTransform(new TranslateTransform(x, groundY - 104 * 0.82 + Math.Sin(t * 18) * 0.6));
             dc.PushTransform(new ScaleTransform(0.82, 0.82));
@@ -1752,18 +2040,20 @@ namespace SnowDesk
             Section(root, "СНЕГОПАД");
             Row(root, new string[] { "Лёгкий", "Ровный", "Метель" }, delegate (int i) { return S.Level == i; }, delegate (int i) { w.SetLevel(i); S.Save(); });
             Section(root, "КУРСОР");
-            Row(root, new string[] { "Не трогать", "🧤 Варежка", "⚪ Снежок", "Лопата" }, delegate (int i) { return S.Tool == i; }, delegate (int i) { S.Tool = i; S.Save(); w.ToolShowUntil = w.Time + 3; });
-            root.Children.Add(Text("Варежка и лопата сметают снег, по которому ведёшь курсором. Снежок: веди курсор по сугробу — шар растёт, замри на секунду — шар встанет. Второй шар поставь на первый — будет снеговик.", 11, Sub, FontWeights.Normal, true));
+            Row(root, new string[] { "Не трогать", "🧤 Варежка", "⚪ Снежок", "🪣 Лопата" }, delegate (int i) { return S.Tool == i; }, delegate (int i) { S.Tool = i; S.Save(); w.ToolShowUntil = w.Time + 3; });
+            root.Children.Add(Text("Варежка и лопата сгребают снег. Снеговик: зажми левую кнопку на снегу (внизу или на окне) и катай — ком растёт. Отпусти — ком встанет. Скатай второй и отпусти над первым — получится снеговик, третий — голова.", 11, Sub, FontWeights.Normal, true));
             Section(root, "ВЕТЕР");
             Row(root, new string[] { "← Влево", "Штиль", "Порывы", "Вправо →" }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; return S.Wind == map[i]; }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; S.Wind = map[i]; S.Save(); });
             Section(root, "ЧУДЕСА");
             System.Windows.Controls.Primitives.UniformGrid acts = new System.Windows.Controls.Primitives.UniformGrid();
             acts.Columns = 2;
             acts.Children.Add(Big("⛄  Слепить снеговика", delegate { w.AutoSnowman(); }));
-            acts.Children.Add(Big("🚜  Снегоуборщик", delegate { w.CleanAll(); }));
+            acts.Children.Add(Big("🚜  Вызвать снегоуборщик", delegate { w.CleanAll(); }));
             acts.Children.Add(Big("🎅  Позвать Санту", delegate { w.CallSanta(); }));
             acts.Children.Add(Big("☃  Растопить снеговиков", delegate { w.ClearSnowmen(); }));
             root.Children.Add(acts);
+            Section(root, "СНЕГОУБОРЩИК ВЫЕЗЖАЕТ САМ");
+            Row(root, new string[] { "Никогда", "Раз в 5 мин", "15 мин", "30 мин" }, delegate (int i) { return S.Plow == i; }, delegate (int i) { S.Plow = i; S.Save(); w.ResetPlow(); });
             Section(root, "НАСТРОЙКИ");
             WrapPanel opts = new WrapPanel();
             opts.Children.Add(Chip("💡 Гирлянда", delegate { return S.Garland; }, delegate { S.Garland = !S.Garland; S.Save(); }));
@@ -2067,4 +2357,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 8 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
+Write-Host 'Готово! Версия 9 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
