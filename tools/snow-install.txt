@@ -50,6 +50,7 @@ namespace SnowDesk
         [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
         [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
         [StructLayout(LayoutKind.Sequential)] public struct MARGINS { public int L, R, T, B; }
+        [StructLayout(LayoutKind.Sequential)] public struct STYLESTRUCT { public int Old, New; }
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
         public static readonly IntPtr TOP = new IntPtr(-1), BOTTOM = new IntPtr(1);
@@ -104,18 +105,21 @@ namespace SnowDesk
                         case "tips": Tips = v == 1; break;
                         case "compat": Compat = v == 1; break;
                         case "fps": Fps = v == 1; break;
+                        case "ver": ver = v; break;
                     }
                 }
             }
             catch { }
+            if (ver < 5) { Compat = false; ver = 5; Save(); }
         }
+        int ver;
         public void Save()
         {
             try
             {
                 File.WriteAllLines(path, new string[] {
                     "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "compat=" + (Compat ? 1 : 0), "fps=" + (Fps ? 1 : 0) });
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "compat=" + (Compat ? 1 : 0), "fps=" + (Fps ? 1 : 0), "ver=" + ver });
             }
             catch { }
         }
@@ -157,6 +161,12 @@ namespace SnowDesk
                 HwndSource.FromHwnd(Hwnd).AddHook(delegate (IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled)
                 {
                     if (msg == 0x0312 && wp.ToInt32() == 7) { handled = true; Program.Quit(); }   // Ctrl+Alt+Q
+                    if (msg == 0x007C && wp.ToInt32() == -20)   // WM_STYLECHANGING: кто-то меняет стиль окна — оставляем «пропускать клики»
+                    {
+                        Native.STYLESTRUCT ss = (Native.STYLESTRUCT)Marshal.PtrToStructure(lp, typeof(Native.STYLESTRUCT));
+                        ss.New |= 0x20 | 0x80 | 0x80000 | 0x08000000;
+                        Marshal.StructureToPtr(ss, lp, false);
+                    }
                     return IntPtr.Zero;
                 });
                 Native.RegisterHotKey(Hwnd, 7, 0x0001 | 0x0002 | 0x4000, 0x51);   // Ctrl+Alt+Q
@@ -538,7 +548,7 @@ namespace SnowDesk
             IntPtr anchor; double sy, h;
             if (!NearSurface(mx, my, out anchor, out sy, out h)) return;
             rolling = new Man { X = mx, Anchor = anchor };
-            rolling.R.Add(6);
+            rolling.R.Add(9);
             carrying = false;
         }
 
@@ -578,7 +588,7 @@ namespace SnowDesk
         {
             Man b = rolling; rolling = null; carrying = false;
             double r = b.R[0];
-            if (r < 7) { Puff(b.X, my, 6); return; }
+            if (r < 5) { Puff(b.X, my, 6); return; }
             Man best = null;
             foreach (Man m in men)
             {
@@ -729,7 +739,7 @@ namespace SnowDesk
                 hidden = full;
                 Front.Visibility = full ? Visibility.Hidden : Visibility.Visible;
             }
-            if (!full) { Front.KeepZ(); ScanWindows(); CheckClickThrough(); }
+            if (!full) { Front.KeepZ(); ScanWindows(); }
             if ((!S.Windows || full) && caps.Count > 0) DropAllCaps();
             if (S.Tips && S.Tool == 2 && !tipSnowball && Tip != null)
             {
@@ -891,7 +901,13 @@ namespace SnowDesk
             if (!masked) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
             if (S.Fps)
             {
-                FormattedText ft = new FormattedText("FPS " + fps + "  окон " + caps.Count, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White, Scale);
+                string[] tools = { "ничего", "варежка", "снежок", "лопата" };
+                IntPtr dA; double dSy, dH;
+                bool dNear = NearSurface(mx, my, out dA, out dSy, out dH);
+                string info = "FPS " + fps + (S.Compat ? " (совм.)" : "") + "  окон " + caps.Count + "  курсор: " + tools[S.Tool]
+                    + "  у снега: " + (dNear ? "да, " + Math.Round(dH) + "px" : "нет") + "  кнопка: " + ((Native.GetAsyncKeyState(0x01) & 0x8000) != 0 ? "зажата" : "-")
+                    + "  шар: " + (rolling == null ? "-" : Math.Round(rolling.R[0]).ToString()) + "  снеговиков: " + men.Count;
+                FormattedText ft = new FormattedText(info, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White, Scale);
                 dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)), null, new Rect(8, 40, ft.Width + 16, ft.Height + 8), 6, 6);
                 dc.DrawText(ft, new Point(16, 44));
             }
@@ -1375,14 +1391,20 @@ namespace SnowDesk
         Brush beaconGlow;
         void InitTools()
         {
-            Brush mit = V("#ff5a5f", "#c41d2b"), cuff = V("#ffffff", "#dfe8f3"), white = S("#ffffff");
-            mitten.Add(F("M10,46 C4,40 2,28 4,18 C6,8 14,2 24,2 C34,2 40,10 40,22 L40,34 C44,30 50,30 52,36 C54,42 48,48 42,52 L38,56 L12,56 Z", mit));
-            Pen dash = new Pen(white, 2); dash.DashStyle = new DashStyle(new double[] { 1.5, 1.5 }, 0); dash.Freeze();
-            mitten.Add(L("M8,22 C14,20 32,20 38,22 M7,30 C14,28 32,28 39,30", dash));
-            mitten.Add(F("M14,14 l3,-3 3,3 -3,3 z M24,10 l3,-3 3,3 -3,3 z", white));
-            mitten.Add(R(8, 52, 34, 13, 5, cuff));
-            mitten.Add(L("M12,55 v7 M17,55 v7 M22,55 v7 M27,55 v7 M32,55 v7 M37,55 v7", P(S("#c9d6e6"), 1.2)));
-            mitten.Add(L("M16,8 C20,5 26,5 30,7", P(new SolidColorBrush(Color.FromArgb(115, 255, 255, 255)), 2.5)));
+            Brush white = S("#ffffff");
+            Brush mit = D("#ff6b6b", "#e03141", "#a8182a"), thumb = new LinearGradientBrush(C("#f04a55"), C("#b81d2e"), new Point(0, 0), new Point(1, 1)), cuff = V("#ffffff", "#dbe5f1");
+            thumb.Freeze();
+            RadialGradientBrush shine = new RadialGradientBrush(Color.FromArgb(90, 255, 255, 255), Color.FromArgb(0, 255, 255, 255));
+            shine.Center = shine.GradientOrigin = new Point(0.35, 0.3); shine.RadiusX = shine.RadiusY = 0.7; shine.Freeze();
+            const string palm = "M8,48 C4,40 3,28 5,19 C7,10 13,5 20,5 C28,5 33,11 33,20 L33,48 Z";
+            mitten.Add(F("M30,30 C36,26 42,27 43,33 C44,38 40,43 34,46 L30,40 Z", thumb));
+            mitten.Add(F(palm, mit));
+            mitten.Add(F(palm, shine));
+            mitten.Add(L("M8,30 l3,-3 3,3 3,-3 3,3 3,-3 3,3 3,-3 3,3", P(new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)), 1.3)));
+            mitten.Add(L("M8,36 l3,-3 3,3 3,-3 3,3 3,-3 3,3 3,-3 3,3", P(new SolidColorBrush(Color.FromArgb(230, 255, 209, 102)), 1.1)));
+            mitten.Add(L("M19,12 V22 M14.7,14.5 L23.3,19.5 M14.7,19.5 L23.3,14.5", P(white, 1.1)));
+            mitten.Add(R(5, 45, 30, 11, 5, cuff));
+            mitten.Add(L("M9,47 v7 M13,47 v7 M17,47 v7 M21,47 v7 M25,47 v7 M29,47 v7", P(S("#c4d1e2"), 1.1)));
 
             Brush wood = new LinearGradientBrush(C("#c98c4e"), C("#8a5a2b"), new Point(0, 0), new Point(1, 0)); wood.Freeze();
             Brush blade = D("#7dd6ff", "#3ea2ee", "#1f7fd1");
@@ -1412,20 +1434,22 @@ namespace SnowDesk
 
         public void DrawMitten(DrawingContext dc, double x, double y, double tilt)
         {
-            // кончики пальцев варежки — у курсора
-            dc.PushTransform(new TranslateTransform(x - 22, y - 4));
-            dc.PushTransform(new RotateTransform(tilt + 10, 22, 4));
+            // варежка маленькая, кончик — у курсора, чуть покачивается при движении
+            dc.PushTransform(new TranslateTransform(x - 12, y - 3));
+            dc.PushTransform(new RotateTransform(tilt * 0.6 + 8, 12, 3));
+            dc.PushTransform(new ScaleTransform(0.6, 0.6));
             foreach (Part p in mitten) Draw(dc, p);
-            dc.Pop(); dc.Pop();
+            dc.Pop(); dc.Pop(); dc.Pop();
         }
 
         public void DrawShovel(DrawingContext dc, double x, double y, double tilt)
         {
             // середина ковша — у курсора, лопата чуть наклонена
-            dc.PushTransform(new TranslateTransform(x - 30, y - 112));
-            dc.PushTransform(new RotateTransform(-22 + tilt, 30, 112));
+            dc.PushTransform(new TranslateTransform(x - 30 * 0.6, y - 112 * 0.6));
+            dc.PushTransform(new RotateTransform(-22 + tilt * 0.6, 30 * 0.6, 112 * 0.6));
+            dc.PushTransform(new ScaleTransform(0.6, 0.6));
             foreach (Part p in shovel) Draw(dc, p);
-            dc.Pop(); dc.Pop();
+            dc.Pop(); dc.Pop(); dc.Pop();
         }
 
         public void DrawTruck(DrawingContext dc, double x, double groundY, double t, double pile)
@@ -1834,4 +1858,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 4 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
+Write-Host 'Готово! Версия 5 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
