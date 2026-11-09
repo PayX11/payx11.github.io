@@ -1,2 +1,2 @@
-1.5
+1.6
 https://payx11.github.io/snow/SnowForYou.exe
