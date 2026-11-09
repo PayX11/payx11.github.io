@@ -5,8 +5,11 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 Get-Process SnowDesk -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 $src = @'
-// «Снег на рабочем столе»: прозрачное окно поверх всего, сквозь которое проходят клики.
-// Снежинки, ветер, сугробы на панели задач и окнах, снеговики, трактор, Санта и гирлянда.
+// «Снег на рабочем столе» для Windows.
+// Два прозрачных окна, сквозь которые проходят клики:
+//  - заднее (под всеми окнами, над обоями) — падающий снег и гирлянда;
+//  - переднее (поверх всего) — сугробы на окнах и над панелью задач, снежки, снеговики, трактор, Санта.
+// Курсором можно сметать снег (варежка) и катать снежки, ставить их друг на друга — получается снеговик.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -41,37 +44,31 @@ namespace SnowDesk
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT v, int s);
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+        public static readonly IntPtr TOP = new IntPtr(-1), BOTTOM = new IntPtr(1);
+        public const uint NOSIZE = 1, NOMOVE = 2, NOACTIVATE = 0x10;
     }
 
-    class Flake
-    {
-        public double X, Y, R, Vy, Phase, Amp, Depth, Rot, RotSpeed, Vx;
-        public bool Crystal;
-    }
+    class Flake { public double X, Y, R, Vy, Phase, Amp, Depth, Rot, RotSpeed, Vx; public bool Crystal; }
+    class Chunk { public double X, Y, Vx, Vy, R, Life; }
+    class Spark { public double X, Y, Vx, Vy, Life, Max; }
+    class Cap { public double L, T, R; public double[] H; public bool Seen; }
 
-    class Chunk  // комочки снега: осыпаются с окон, летят из-под трактора
+    // снеговик или стопка снежков: R — радиусы снизу вверх
+    class Man
     {
-        public double X, Y, Vx, Vy, R, Life;
-    }
-
-    class Cap  // снежная шапка на верхнем крае окна
-    {
-        public double L, T, R;   // в DIP
-        public double[] H;
-        public bool Seen;
-    }
-
-    class Snowman
-    {
-        public double X, Scale, Born, WaveAt;
+        public double X, Born = -1, DecorateAt = double.MaxValue, WaveAt, Melt, FallY = double.NaN, FallV;
+        public List<double> R = new List<double>();
+        public IntPtr Anchor = IntPtr.Zero;
         public int Hat, Scarf;
-        public double Melt;  // 0 — стоит, >0 — тает (трактор/уборка)
+        public bool Decorated { get { return R.Count >= 2 && Clock.Now >= DecorateAt; } }
     }
+
+    static class Clock { public static double Now; }
 
     class Settings
     {
-        public int Level = 1;          // 0 лёгкий, 1 обычный, 2 метель
-        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Paused = false;
+        public int Level = 1, Tool = 1, Wind = 0;       // Tool: 0 ничего, 1 варежка, 2 снежок; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
+        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true;
         string path;
         public Settings()
         {
@@ -84,13 +81,18 @@ namespace SnowDesk
                 {
                     string[] kv = line.Split('=');
                     if (kv.Length != 2) continue;
+                    int v; int.TryParse(kv[1], out v);
                     switch (kv[0])
                     {
-                        case "level": Level = Math.Max(0, Math.Min(2, int.Parse(kv[1]))); break;
-                        case "garland": Garland = kv[1] == "1"; break;
-                        case "mouse": Mouse = kv[1] == "1"; break;
-                        case "windows": Windows = kv[1] == "1"; break;
-                        case "santa": Santa = kv[1] == "1"; break;
+                        case "level": Level = Math.Max(0, Math.Min(2, v)); break;
+                        case "tool": Tool = Math.Max(0, Math.Min(2, v)); break;
+                        case "wind": Wind = Math.Max(0, Math.Min(3, v)); break;
+                        case "garland": Garland = v == 1; break;
+                        case "mouse": Mouse = v == 1; break;
+                        case "windows": Windows = v == 1; break;
+                        case "santa": Santa = v == 1; break;
+                        case "over": Over = v == 1; break;
+                        case "tips": Tips = v == 1; break;
                     }
                 }
             }
@@ -101,84 +103,90 @@ namespace SnowDesk
             try
             {
                 File.WriteAllLines(path, new string[] {
-                    "level=" + Level, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0) });
+                    "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0) });
             }
             catch { }
         }
     }
 
-    class SnowView : FrameworkElement
+    class View : FrameworkElement
     {
-        public SnowWindow W;
-        protected override void OnRender(DrawingContext dc) { if (W != null) W.Draw(dc); }
+        public World W; public bool Front;
+        protected override void OnRender(DrawingContext dc) { if (W != null) { if (Front) W.DrawFront(dc); else W.DrawBack(dc); } }
     }
 
-    class SnowWindow : Window
+    class Layer : Window
+    {
+        public IntPtr Hwnd; public View V; bool front;
+        public Layer(World w, bool isFront)
+        {
+            front = isFront;
+            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+            Topmost = isFront; ShowInTaskbar = false; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
+            Left = 0; Top = 0; Width = w.Width; Height = w.Height;
+            V = new View(); V.W = w; V.Front = isFront; V.IsHitTestVisible = false; Content = V;
+            SourceInitialized += delegate
+            {
+                Hwnd = new WindowInteropHelper(this).Handle;
+                int ex = Native.GetWindowLong(Hwnd, -20);
+                Native.SetWindowLong(Hwnd, -20, ex | 0x20 | 0x80 | 0x80000 | 0x08000000);
+                PresentationSource src = PresentationSource.FromVisual(this);
+                if (src != null && src.CompositionTarget != null) w.Scale = src.CompositionTarget.TransformToDevice.M11;
+                KeepZ();
+            };
+        }
+        public void KeepZ()
+        {
+            if (Hwnd == IntPtr.Zero) return;
+            Native.SetWindowPos(Hwnd, front ? Native.TOP : Native.BOTTOM, 0, 0, 0, 0, Native.NOSIZE | Native.NOMOVE | Native.NOACTIVATE);
+        }
+    }
+
+    class World
     {
         public Settings S = new Settings();
+        public double Width, Height, Scale = 1;
+        public Layer Back, Front;
+        public Action<string> Tip;
         Random rnd = new Random();
         List<Flake> flakes = new List<Flake>();
         List<Chunk> chunks = new List<Chunk>();
-        List<Snowman> men = new List<Snowman>();
+        List<Spark> sparks = new List<Spark>();
+        List<Man> men = new List<Man>();
         Dictionary<IntPtr, Cap> caps = new Dictionary<IntPtr, Cap>();
-        double[] ground;           // высота сугроба по колонкам
-        const double COL = 4;      // ширина колонки, DIP
-        double width, height, groundY, scale = 1;
-        double wind, windTarget, nextGust, time;
+        double[] ground;
+        const double COL = 4, MAXG = 70;
+        double groundY, wind, windTarget, nextGust, time;
         double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta;
-        double mouseX = -9999, mouseY = -9999;
-        bool hiddenFull;
-        IntPtr me;
-        SnowView view;
-        DispatcherTimer timer;
-        DateTime last = DateTime.Now;
+        double mx = -9999, my = -9999, pmx, pmy, mSpeed;
+        bool hidden, tipSnowball;
         int tick;
+        DateTime last = DateTime.Now;
 
-        // кисти и фигуры заранее, чтобы не нагружать каждый кадр
+        // снежок, который катают курсором
+        Man rolling; double rollRot, rollStill, rollCooldown;
+
         Brush[] glow = new Brush[6];
+        Brush dust, snowFill, capFill, coal, carrot, stick;
+        Pen snowEdge, crystalPen;
         Geometry crystalGeo;
-        Pen crystalPen;
-        Brush snowFill, capFill, coal, carrot, stick, sparkle;
-        Pen snowEdge;
+        Art art;
         static readonly Color[] HatColors = { Color.FromRgb(30, 30, 36), Color.FromRgb(200, 40, 50), Color.FromRgb(40, 110, 200), Color.FromRgb(40, 150, 90), Color.FromRgb(140, 60, 170) };
         static readonly Color[] ScarfColors = { Color.FromRgb(220, 40, 50), Color.FromRgb(250, 180, 40), Color.FromRgb(60, 170, 230), Color.FromRgb(60, 190, 110), Color.FromRgb(240, 110, 170) };
         static readonly Color[] BulbColors = { Color.FromRgb(255, 70, 70), Color.FromRgb(255, 200, 60), Color.FromRgb(80, 220, 120), Color.FromRgb(80, 160, 255), Color.FromRgb(230, 110, 255) };
 
-        public SnowWindow()
+        public World()
         {
-            WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            Background = Brushes.Transparent;
-            Topmost = true;
-            ShowInTaskbar = false;
-            ResizeMode = ResizeMode.NoResize;
-            Left = 0; Top = 0;
             Width = SystemParameters.PrimaryScreenWidth;
             Height = SystemParameters.PrimaryScreenHeight;
-            width = Width; height = Height;
             groundY = SystemParameters.WorkArea.Bottom;
-            ground = new double[(int)(width / COL) + 2];
-            for (int i = 0; i < ground.Length; i++) ground[i] = 3 + Math.Sin(i * 0.05) * 1.5 + Math.Sin(i * 0.013) * 2;
-            view = new SnowView();
-            view.W = this;
-            view.IsHitTestVisible = false;
-            Content = view;
+            ground = new double[(int)(Width / COL) + 2];
+            for (int i = 0; i < ground.Length; i++) ground[i] = 4 + Math.Sin(i * 0.05) * 1.5 + Math.Sin(i * 0.013) * 2.5;
             MakeBrushes();
-            SourceInitialized += delegate
-            {
-                me = new WindowInteropHelper(this).Handle;
-                int ex = Native.GetWindowLong(me, -20);
-                Native.SetWindowLong(me, -20, ex | 0x20 | 0x80 | 0x80000 | 0x08000000);
-                PresentationSource src = PresentationSource.FromVisual(this);
-                if (src != null && src.CompositionTarget != null) scale = src.CompositionTarget.TransformToDevice.M11;
-            };
-            nextSanta = 60 + rnd.NextDouble() * 120;
+            art = new Art();
+            nextSanta = 90 + rnd.NextDouble() * 120;
             SetLevel(S.Level);
-            timer = new DispatcherTimer(DispatcherPriority.Render);
-            timer.Interval = TimeSpan.FromMilliseconds(33);
-            timer.Tick += delegate { Step(); };
-            timer.Start();
         }
 
         void MakeBrushes()
@@ -190,9 +198,13 @@ namespace SnowDesk
                 g.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(255 * a), 255, 255, 255), 0));
                 g.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(200 * a), 240, 248, 255), 0.45));
                 g.GradientStops.Add(new GradientStop(Color.FromArgb(0, 220, 235, 255), 1));
-                g.Freeze();
-                glow[i] = g;
+                g.Freeze(); glow[i] = g;
             }
+            RadialGradientBrush d = new RadialGradientBrush();
+            d.GradientStops.Add(new GradientStop(Color.FromArgb(255, 255, 255, 255), 0));
+            d.GradientStops.Add(new GradientStop(Color.FromArgb(200, 255, 233, 168), 0.4));
+            d.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 211, 107), 1));
+            d.Freeze(); dust = d;
             StreamGeometry sg = new StreamGeometry();
             using (StreamGeometryContext c = sg.Open())
             {
@@ -210,21 +222,18 @@ namespace SnowDesk
                     }
                 }
             }
-            sg.Freeze();
-            crystalGeo = sg;
+            sg.Freeze(); crystalGeo = sg;
             crystalPen = new Pen(new SolidColorBrush(Color.FromArgb(235, 255, 255, 255)), 0.16);
-            crystalPen.StartLineCap = crystalPen.EndLineCap = PenLineCap.Round;
-            crystalPen.Freeze();
+            crystalPen.StartLineCap = crystalPen.EndLineCap = PenLineCap.Round; crystalPen.Freeze();
             LinearGradientBrush f = new LinearGradientBrush(Color.FromArgb(250, 255, 255, 255), Color.FromArgb(240, 215, 230, 248), 90);
             f.Freeze(); snowFill = f;
-            LinearGradientBrush cf = new LinearGradientBrush(Color.FromArgb(248, 255, 255, 255), Color.FromArgb(235, 222, 236, 252), 90);
+            LinearGradientBrush cf = new LinearGradientBrush(Color.FromArgb(250, 255, 255, 255), Color.FromArgb(238, 222, 236, 252), 90);
             cf.Freeze(); capFill = cf;
-            snowEdge = new Pen(new SolidColorBrush(Color.FromArgb(160, 190, 210, 235)), 1); snowEdge.Freeze();
-            coal = new SolidColorBrush(Color.FromRgb(35, 35, 40)); coal.Freeze();
-            carrot = new SolidColorBrush(Color.FromRgb(245, 130, 30)); carrot.Freeze();
-            stick = new SolidColorBrush(Color.FromRgb(110, 70, 40)); stick.Freeze();
-            sparkle = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)); sparkle.Freeze();
+            snowEdge = new Pen(new SolidColorBrush(Color.FromArgb(150, 190, 210, 235)), 1); snowEdge.Freeze();
+            coal = Solid(35, 35, 40); carrot = Solid(245, 130, 30); stick = Solid(110, 70, 40);
         }
+
+        static Brush Solid(byte r, byte g, byte b) { SolidColorBrush s = new SolidColorBrush(Color.FromRgb(r, g, b)); s.Freeze(); return s; }
 
         public void SetLevel(int l)
         {
@@ -240,8 +249,8 @@ namespace SnowDesk
             f.Depth = rnd.NextDouble();
             f.Crystal = rnd.NextDouble() < 0.16;
             f.R = (f.Crystal ? 4.5 : 1.2) + f.Depth * (f.Crystal ? 5.5 : 3.2);
-            f.X = rnd.NextDouble() * (width + 200) - 100;
-            f.Y = anywhere ? rnd.NextDouble() * height : -10 - rnd.NextDouble() * 60;
+            f.X = rnd.NextDouble() * (Width + 200) - 100;
+            f.Y = anywhere ? rnd.NextDouble() * Height : -10 - rnd.NextDouble() * 60;
             f.Vy = 22 + f.Depth * 55 + rnd.NextDouble() * 18;
             f.Phase = rnd.NextDouble() * 6.28;
             f.Amp = 8 + rnd.NextDouble() * 22;
@@ -250,12 +259,7 @@ namespace SnowDesk
             return f;
         }
 
-        double GroundAt(double x)
-        {
-            int i = (int)(x / COL);
-            if (i < 0 || i >= ground.Length) return 0;
-            return ground[i];
-        }
+        double GroundAt(double x) { int i = (int)(x / COL); return i < 0 || i >= ground.Length ? 0 : ground[i]; }
 
         void AddSnow(double x, double amount)
         {
@@ -264,58 +268,94 @@ namespace SnowDesk
             {
                 int j = i + k;
                 if (j < 0 || j >= ground.Length) continue;
-                ground[j] = Math.Min(MaxGround(), ground[j] + amount * (k == 0 ? 0.5 : k == -1 || k == 1 ? 0.2 : 0.05));
+                ground[j] = Math.Min(MAXG, ground[j] + amount * (k == 0 ? 0.5 : k == -1 || k == 1 ? 0.2 : 0.05));
             }
         }
 
-        double MaxGround() { return 70; }
+        double CapAt(Cap c, double x)
+        {
+            int i = (int)((x - c.L) / COL);
+            if (i < 0 || i >= c.H.Length) return -1;
+            return c.H[i];
+        }
 
-        void Step()
+        // высота поверхности (верх снега) под точкой x для опоры: окно или пол
+        double SurfaceY(IntPtr anchor, double x)
+        {
+            Cap c;
+            if (anchor != IntPtr.Zero && caps.TryGetValue(anchor, out c)) return c.T - Math.Max(0, CapAt(c, x));
+            return groundY - GroundAt(x);
+        }
+
+        // ---------- шаг симуляции ----------
+        public void Step()
         {
             DateTime now = DateTime.Now;
             double dt = Math.Min(0.1, (now - last).TotalSeconds);
             last = now;
-            if (S.Paused) { return; }
-            time += dt;
+            if (S.Paused) return;
+            time += dt; Clock.Now = time;
             tick++;
             if (tick % 30 == 1) Housekeeping();
-            if (hiddenFull) return;
+            if (hidden) return;
 
-            // ветер с порывами
+            // ветер
             if (time > nextGust)
             {
-                windTarget = (rnd.NextDouble() - 0.4) * (S.Level == 2 ? 140 : 60);
+                double baseW = S.Wind == 2 ? -70 : S.Wind == 3 ? 70 : 0;
+                double gust = S.Wind == 1 ? 0 : (rnd.NextDouble() - 0.4) * (S.Level == 2 ? 140 : 60);
+                if (S.Wind >= 2) gust = (rnd.NextDouble() - 0.5) * 40;
+                windTarget = baseW + gust;
                 nextGust = time + 3 + rnd.NextDouble() * 6;
             }
             wind += (windTarget - wind) * Math.Min(1, dt * 0.6);
 
             Native.POINT p;
-            if (S.Mouse && Native.GetCursorPos(out p)) { mouseX = p.X / scale; mouseY = p.Y / scale; }
-            else { mouseX = mouseY = -9999; }
+            pmx = mx; pmy = my;
+            if (Native.GetCursorPos(out p)) { mx = p.X / Scale; my = p.Y / Scale; }
+            double mdx = mx - pmx, mdy = my - pmy;
+            if (Math.Abs(mdx) > 400 || Math.Abs(mdy) > 400) { mdx = mdy = 0; }
+            mSpeed = Math.Sqrt(mdx * mdx + mdy * mdy) / Math.Max(dt, 0.001);
 
+            StepFlakes(dt);
+            Settle();
+            if (S.Tool == 1) Mitten(dt, mdx);
+            if (S.Tool == 2) Snowball(dt, mdx);
+            StepChunks(dt);
+            StepTractor(dt);
+            StepMen(dt);
+            StepSanta(dt);
+
+            Back.V.InvalidateVisual();
+            Front.V.InvalidateVisual();
+        }
+
+        void StepFlakes(double dt)
+        {
             foreach (Flake f in flakes)
             {
                 f.Phase += dt * (0.8 + f.Depth);
                 double vx = wind * (0.4 + f.Depth * 0.8) + Math.Cos(f.Phase) * f.Amp * 0.6;
-                // снег разлетается от мышки
-                double dx = f.X - mouseX, dy = f.Y - mouseY, d2 = dx * dx + dy * dy;
-                if (d2 < 120 * 120 && d2 > 1)
+                if (S.Mouse)
                 {
-                    double d = Math.Sqrt(d2), push = (1 - d / 120) * 420;
-                    f.Vx += dx / d * push * dt;
-                    f.Y += dy / d * push * dt * 0.5;
+                    double dx = f.X - mx, dy = f.Y - my, d2 = dx * dx + dy * dy;
+                    if (d2 < 120 * 120 && d2 > 1)
+                    {
+                        double d = Math.Sqrt(d2), push = (1 - d / 120) * 420;
+                        f.Vx += dx / d * push * dt;
+                        f.Y += dy / d * push * dt * 0.5;
+                    }
                 }
                 f.Vx *= Math.Pow(0.15, dt);
                 f.X += (vx + f.Vx) * dt;
                 f.Y += f.Vy * dt * (S.Level == 2 ? 1.35 : 1);
                 f.Rot += f.RotSpeed * dt;
-                if (f.X < -120) f.X += width + 220;
-                if (f.X > width + 120) f.X -= width + 220;
+                if (f.X < -120) f.X += Width + 220;
+                if (f.X > Width + 120) f.X -= Width + 220;
 
                 bool landed = false;
                 if (f.Depth > 0.45)
                 {
-                    // шапки на окнах
                     if (S.Windows)
                     {
                         foreach (Cap c in caps.Values)
@@ -330,131 +370,280 @@ namespace SnowDesk
                                 {
                                     int j = ci + k;
                                     if (j >= 0 && j < c.H.Length && c.H[j] >= 0)
-                                        c.H[j] = Math.Min(16 + (j % 7 == 0 ? 3 : 0), c.H[j] + f.R * (k == 0 ? 1.0 : 0.4));
+                                        c.H[j] = Math.Min(18, c.H[j] + f.R * (k == 0 ? 1.0 : 0.4));
                                 }
-                                landed = true;
-                                break;
+                                landed = true; break;
                             }
                         }
                     }
-                    if (!landed && f.Y >= groundY - GroundAt(f.X))
-                    {
-                        AddSnow(f.X, f.R * 2.0);
-                        landed = true;
-                    }
+                    if (!landed && f.Y >= groundY - GroundAt(f.X)) { AddSnow(f.X, f.R * 2.0); landed = true; }
                 }
-                if (landed || f.Y > height + 20)
+                if (landed || f.Y > Height + 20)
                 {
                     Flake n = NewFlake(false);
                     f.X = n.X; f.Y = n.Y; f.Vy = n.Vy; f.Vx = 0; f.R = n.R; f.Depth = n.Depth; f.Crystal = n.Crystal;
                 }
             }
+        }
 
-            // сугроб оседает плавно, без иголок
+        void Settle()
+        {
             for (int i = 1; i < ground.Length - 1; i++)
             {
                 double avg = (ground[i - 1] + ground[i + 1]) * 0.5;
                 if (Math.Abs(ground[i] - avg) > 1.2) ground[i] += (avg - ground[i]) * 0.25;
             }
             foreach (Cap c in caps.Values)
-            {
                 for (int i = 1; i < c.H.Length - 1; i++)
                 {
                     if (c.H[i] < 0 || c.H[i - 1] < 0 || c.H[i + 1] < 0) continue;
-                    double avg = (c.H[i - 1] + c.H[i + 1]) * 0.5;
-                    c.H[i] += (avg - c.H[i]) * 0.2;
+                    c.H[i] += ((c.H[i - 1] + c.H[i + 1]) * 0.5 - c.H[i]) * 0.2;
                 }
-            }
+        }
 
-            // комочки
+        // варежка: проводишь курсором по сугробу — снег разлетается
+        void Mitten(double dt, double mdx)
+        {
+            if (mSpeed < 40) return;
+            double amount = Math.Min(6, mSpeed * dt * 0.35);
+            double top = groundY - GroundAt(mx);
+            if (my > top - 16 && my < groundY + 6) SweepCols(ground, 0, mx, amount, mdx, groundY);
+            foreach (Cap c in caps.Values)
+            {
+                if (mx < c.L - 10 || mx > c.R + 10) continue;
+                double h = Math.Max(0, CapAt(c, mx));
+                if (my > c.T - h - 16 && my < c.T + 8) SweepCols(c.H, c.L, mx, amount, mdx, c.T);
+            }
+        }
+
+        void SweepCols(double[] h, double left, double x, double amount, double mdx, double baseY)
+        {
+            int i0 = (int)((x - left) / COL);
+            for (int k = -4; k <= 4; k++)
+            {
+                int j = i0 + k;
+                if (j < 0 || j >= h.Length || h[j] <= 0.3) continue;
+                double take = Math.Min(h[j], amount * (1 - Math.Abs(k) / 5.0));
+                h[j] -= take;
+                if (take > 0.6 && rnd.NextDouble() < 0.5 && chunks.Count < 700)
+                    chunks.Add(new Chunk { X = left + j * COL, Y = baseY - h[j] - 2, Vx = mdx * 8 + (rnd.NextDouble() - 0.5) * 80, Vy = -120 - rnd.NextDouble() * 140, R = 1.4 + rnd.NextDouble() * 2, Life = 1.6 });
+            }
+        }
+
+        // снежок: курсор над сугробом — катаем шар, остановился на секунду — шар ставится
+        void Snowball(double dt, double mdx)
+        {
+            rollCooldown -= dt;
+            if (rolling == null)
+            {
+                if (rollCooldown > 0 || Math.Abs(mdx) < 0.8) return;
+                IntPtr anchor; double sy, h;
+                if (!NearSurface(mx, my, out anchor, out sy, out h) || h < 2) return;
+                rolling = new Man { X = mx, Anchor = anchor };
+                rolling.R.Add(5);
+                rollStill = 0;
+                return;
+            }
+            double r = rolling.R[0];
+            double surf = SurfaceY(rolling.Anchor, mx);
+            bool lost = Math.Abs(my - (surf - r)) > 70 + r || (rolling.Anchor != IntPtr.Zero && !caps.ContainsKey(rolling.Anchor));
+            if (rolling.Anchor != IntPtr.Zero)
+            {
+                Cap c;
+                if (caps.TryGetValue(rolling.Anchor, out c) && (mx < c.L || mx > c.R)) lost = true;
+            }
+            if (lost) { PlaceBall(); return; }
+            double dx = mx - rolling.X;
+            rolling.X = mx;
+            rollRot += dx / Math.Max(4, r) * 57.3;
+            if (Math.Abs(dx) > 0.3)
+            {
+                rollStill = 0;
+                double got = Dig(rolling.Anchor, mx, r, Math.Abs(dx) * 0.12);
+                rolling.R[0] = Math.Min(42, r + got * 0.09 + Math.Abs(dx) * 0.01);
+            }
+            else
+            {
+                rollStill += dt;
+                if (rollStill > 0.8) PlaceBall();
+            }
+        }
+
+        double Dig(IntPtr anchor, double x, double r, double amount)
+        {
+            double[] h = ground; double left = 0;
+            Cap c;
+            if (anchor != IntPtr.Zero && caps.TryGetValue(anchor, out c)) { h = c.H; left = c.L; }
+            int i0 = (int)((x - left) / COL), w = Math.Max(2, (int)(r / COL));
+            double got = 0;
+            for (int k = -w; k <= w; k++)
+            {
+                int j = i0 + k;
+                if (j < 0 || j >= h.Length || h[j] <= 0.5) continue;
+                double take = Math.Min(h[j] - 0.5, amount);
+                h[j] -= take; got += take;
+            }
+            return got;
+        }
+
+        bool NearSurface(double x, double y, out IntPtr anchor, out double sy, out double h)
+        {
+            foreach (KeyValuePair<IntPtr, Cap> kv in caps)
+            {
+                Cap c = kv.Value;
+                if (x < c.L || x > c.R) continue;
+                double ch = CapAt(c, x);
+                if (ch < 0) continue;
+                if (y > c.T - ch - 40 && y < c.T + 6) { anchor = kv.Key; sy = c.T - ch; h = ch; return true; }
+            }
+            double g = GroundAt(x);
+            anchor = IntPtr.Zero; sy = groundY - g; h = g;
+            return y > sy - 40 && y < groundY + 6;
+        }
+
+        void PlaceBall()
+        {
+            Man b = rolling; rolling = null; rollCooldown = 0.6;
+            double r = b.R[0];
+            if (r < 8) { Puff(b.X, SurfaceY(b.Anchor, b.X) - r, 6); return; }
+            // ставим на другой шар, если он под курсором
+            Man best = null;
+            foreach (Man m in men)
+            {
+                if (m.Melt > 0 || !double.IsNaN(m.FallY) || m.Anchor != b.Anchor || m.R.Count >= 3) continue;
+                if (Math.Abs(m.X - b.X) < m.R[m.R.Count - 1] + r * 0.5) best = m;
+            }
+            if (best != null)
+            {
+                best.R.Add(Math.Min(r, best.R[best.R.Count - 1] * 1.05));
+                best.DecorateAt = best.R.Count >= 3 ? time + 0.15 : time + 2.2;
+                best.WaveAt = time + 1;
+                Sparkle(best.X, TopY(best), 14);
+            }
+            else
+            {
+                b.Hat = rnd.Next(HatColors.Length + 1); b.Scarf = rnd.Next(ScarfColors.Length);
+                men.Add(b);
+                if (men.Count > 12) men.RemoveAt(0);
+            }
+        }
+
+        void Puff(double x, double y, int n)
+        {
+            for (int k = 0; k < n; k++)
+                chunks.Add(new Chunk { X = x, Y = y, Vx = (rnd.NextDouble() - 0.5) * 160, Vy = -80 - rnd.NextDouble() * 120, R = 1.5 + rnd.NextDouble() * 2, Life = 1.2 });
+        }
+
+        void Sparkle(double x, double y, int n)
+        {
+            for (int k = 0; k < n; k++)
+            {
+                double a = rnd.NextDouble() * 6.28, v = 40 + rnd.NextDouble() * 90;
+                sparks.Add(new Spark { X = x, Y = y, Vx = Math.Cos(a) * v, Vy = Math.Sin(a) * v - 30, Life = 0.9 + rnd.NextDouble() * 0.5, Max = 1.4 });
+            }
+        }
+
+        void StepChunks(double dt)
+        {
             for (int i = chunks.Count - 1; i >= 0; i--)
             {
                 Chunk c = chunks[i];
-                c.Vy += 600 * dt;
-                c.X += c.Vx * dt; c.Y += c.Vy * dt;
-                c.Life -= dt;
-                if (c.Y >= groundY - GroundAt(c.X)) { AddSnow(c.X, c.R * 0.3); chunks.RemoveAt(i); continue; }
-                if (c.Life <= 0 || c.Y > height) chunks.RemoveAt(i);
+                c.Vy += 600 * dt; c.X += c.Vx * dt; c.Y += c.Vy * dt; c.Life -= dt;
+                if (c.Vy > 0 && c.Y >= groundY - GroundAt(c.X)) { AddSnow(c.X, c.R * 0.3); chunks.RemoveAt(i); continue; }
+                if (c.Life <= 0 || c.Y > Height) chunks.RemoveAt(i);
             }
-
-            // трактор
-            if (!double.IsNaN(tractorX))
+            for (int i = sparks.Count - 1; i >= 0; i--)
             {
-                tractorX += 210 * dt;
-                double plow = tractorX + 70;
-                int i0 = (int)(plow / COL);
-                for (int k = 0; k < 6; k++)
-                {
-                    int j = i0 + k;
-                    if (j < 0 || j >= ground.Length) continue;
-                    double take = ground[j] * 0.9;
-                    if (take > 0.5 && rnd.NextDouble() < 0.35)
-                        chunks.Add(new Chunk { X = j * COL, Y = groundY - ground[j], Vx = 120 + rnd.NextDouble() * 160, Vy = -220 - rnd.NextDouble() * 160, R = 2 + rnd.NextDouble() * 3, Life = 1.2 });
-                    ground[j] -= take;
-                }
-                foreach (Snowman m in men) if (Math.Abs(m.X - plow) < 30 && m.Melt == 0) m.Melt = 0.001;
-                if (tractorX > width + 160) tractorX = double.NaN;
+                Spark s = sparks[i];
+                s.Vy += 30 * dt; s.X += s.Vx * dt; s.Y += s.Vy * dt; s.Vx *= Math.Pow(0.3, dt); s.Life -= dt;
+                if (s.Life <= 0) sparks.RemoveAt(i);
             }
+        }
 
-            // снеговики тают после трактора
+        void StepTractor(double dt)
+        {
+            if (double.IsNaN(tractorX)) return;
+            tractorX += 210 * dt;
+            double plow = tractorX + 90;
+            int i0 = (int)(plow / COL);
+            for (int k = 0; k < 6; k++)
+            {
+                int j = i0 + k;
+                if (j < 0 || j >= ground.Length) continue;
+                double take = ground[j] * 0.9;
+                if (take > 0.5 && rnd.NextDouble() < 0.35)
+                    chunks.Add(new Chunk { X = j * COL, Y = groundY - ground[j], Vx = 120 + rnd.NextDouble() * 160, Vy = -220 - rnd.NextDouble() * 160, R = 2 + rnd.NextDouble() * 3, Life = 1.2 });
+                ground[j] -= take;
+            }
+            foreach (Man m in men) if (m.Anchor == IntPtr.Zero && double.IsNaN(m.FallY) && Math.Abs(m.X - plow) < 30 && m.Melt == 0) m.Melt = 0.001;
+            if (tractorX > Width + 160) tractorX = double.NaN;
+        }
+
+        void StepMen(double dt)
+        {
             for (int i = men.Count - 1; i >= 0; i--)
             {
-                Snowman m = men[i];
+                Man m = men[i];
+                if (!double.IsNaN(m.FallY))   // окно ушло — снеговик падает вниз
+                {
+                    m.FallV += 900 * dt; m.FallY += m.FallV * dt;
+                    double g = groundY - GroundAt(m.X);
+                    if (m.FallY >= g) { m.FallY = double.NaN; m.FallV = 0; m.Anchor = IntPtr.Zero; Puff(m.X, g, 8); }
+                    continue;
+                }
+                if (m.Anchor != IntPtr.Zero && !caps.ContainsKey(m.Anchor)) { m.FallY = BaseY(m); m.FallV = 0; continue; }
                 if (m.Melt > 0)
                 {
                     m.Melt += dt * 0.8;
-                    if (m.Melt > 1) { for (int k = 0; k < 12; k++) chunks.Add(new Chunk { X = m.X, Y = groundY - 40 * m.Scale, Vx = (rnd.NextDouble() - 0.5) * 300, Vy = -200 - rnd.NextDouble() * 200, R = 3 + rnd.NextDouble() * 4, Life = 1.5 }); men.RemoveAt(i); }
+                    if (m.Melt > 1) { Puff(m.X, BaseY(m) - 30, 14); men.RemoveAt(i); }
                 }
-                else if (time > m.WaveAt + 6 + rnd.NextDouble() * 10) m.WaveAt = time;
+                else if (m.Decorated && time > m.WaveAt + 7 + rnd.NextDouble() * 10) m.WaveAt = time;
             }
+        }
 
-            // Санта
+        void StepSanta(double dt)
+        {
             if (S.Santa && double.IsNaN(santaX) && time > nextSanta) CallSanta();
-            if (!double.IsNaN(santaX))
-            {
-                santaX -= 260 * dt;
-                if (rnd.NextDouble() < 0.6)
-                    chunks.Add(new Chunk { X = santaX + 160, Y = santaY + 26, Vx = 30, Vy = -10, R = 1.6, Life = 0.9 });
-                if (santaX < -420) { santaX = double.NaN; nextSanta = time + 420 + rnd.NextDouble() * 600; }
-            }
-
-            view.InvalidateVisual();
+            if (double.IsNaN(santaX)) return;
+            santaX -= 240 * dt;
+            if (rnd.NextDouble() < 0.9)
+                sparks.Add(new Spark { X = santaX + 0.85 * 440, Y = santaY + 0.85 * 100 + (rnd.NextDouble() - 0.5) * 14, Vx = 40 + rnd.NextDouble() * 40, Vy = (rnd.NextDouble() - 0.3) * 30, Life = 1.2 + rnd.NextDouble(), Max = 2.2 });
+            if (santaX < -520) { santaX = double.NaN; nextSanta = time + 420 + rnd.NextDouble() * 600; }
         }
 
         public void CallSanta()
         {
-            santaX = width + 60;
-            santaY = 70 + rnd.NextDouble() * Math.Max(40, height * 0.25);
+            santaX = Width + 60;
+            santaY = 60 + rnd.NextDouble() * Math.Max(40, Height * 0.22);
         }
 
-        // раз в секунду: где окна, не играет ли что-то на весь экран, держимся поверх
+        // ---------- окна, полноэкранные игры ----------
         void Housekeeping()
         {
-            if (me == IntPtr.Zero) return;
+            if (Front.Hwnd == IntPtr.Zero) return;
             IntPtr fg = Native.GetForegroundWindow();
             Native.RECT fr;
             bool full = false;
-            if (fg != IntPtr.Zero && fg != me && fg != Native.GetShellWindow() && Native.GetWindowRect(fg, out fr))
+            if (fg != IntPtr.Zero && fg != Front.Hwnd && fg != Back.Hwnd && fg != Native.GetShellWindow() && Native.GetWindowRect(fg, out fr))
             {
                 string cls = ClassOf(fg);
-                full = cls != "WorkerW" && cls != "Progman" && fr.L <= 0 && fr.T <= 0 &&
-                       fr.R >= (int)(width * scale) && fr.B >= (int)(height * scale);
+                full = cls != "WorkerW" && cls != "Progman" && fr.L <= 0 && fr.T <= 0 && fr.R >= (int)(Width * Scale) && fr.B >= (int)(Height * Scale);
             }
-            if (full != hiddenFull)
+            if (full != hidden)
             {
-                hiddenFull = full;
-                Visibility = full ? Visibility.Hidden : Visibility.Visible;
+                hidden = full;
+                Front.Visibility = Back.Visibility = full ? Visibility.Hidden : Visibility.Visible;
             }
-            if (!full) Native.SetWindowPos(me, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
-            if (S.Windows && !full) ScanWindows(); else if (caps.Count > 0) { DropAllCaps(); }
+            if (!full) { Front.KeepZ(); Back.KeepZ(); }
+            if (S.Windows && !full) ScanWindows(); else if (caps.Count > 0) DropAllCaps();
+            if (S.Tips && S.Tool == 2 && !tipSnowball && Tip != null)
+            {
+                tipSnowball = true;
+                Tip("Снежок: медленно веди курсор над сугробом — шар катится и растёт. Остановись на секунду — шар встанет. Скати ещё один и останови над первым — получится снеговик ⛄");
+            }
         }
 
-        static string ClassOf(IntPtr h)
-        {
-            StringBuilder sb = new StringBuilder(64);
-            Native.GetClassName(h, sb, 64);
-            return sb.ToString();
-        }
+        static string ClassOf(IntPtr h) { StringBuilder sb = new StringBuilder(64); Native.GetClassName(h, sb, 64); return sb.ToString(); }
 
         void ScanWindows()
         {
@@ -462,30 +651,28 @@ namespace SnowDesk
             List<Native.RECT> above = new List<Native.RECT>();
             Native.EnumWindows(delegate (IntPtr h, IntPtr p)
             {
-                if (h == me || !Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+                if (h == Front.Hwnd || h == Back.Hwnd || !Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
                 int cloaked;
                 if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
                 string cls = ClassOf(h);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd") return true;
                 Native.RECT r;
                 if (Native.DwmGetWindowAttribute(h, 9, out r, 16) != 0) Native.GetWindowRect(h, out r);
-                if (r.R - r.L < 160 * scale || r.B - r.T < 80 * scale) { above.Add(r); return true; }
-                if (Native.GetWindowTextLength(h) == 0) { above.Add(r); return true; }
-                double L = r.L / scale, T = r.T / scale, R = r.R / scale;
-                if (T > 30 && T < groundY - 40 && L < width && R > 0)
+                if (r.R - r.L < 160 * Scale || r.B - r.T < 80 * Scale || Native.GetWindowTextLength(h) == 0) { above.Add(r); return true; }
+                double L = r.L / Scale, T = r.T / Scale, R = r.R / Scale;
+                if (T > 30 && T < groundY - 40 && L < Width && R > 0)
                 {
                     Cap c;
                     if (!caps.TryGetValue(h, out c) || Math.Abs(c.L - L) > 1 || Math.Abs(c.T - T) > 1 || Math.Abs(c.R - R) > 1)
                     {
-                        if (c != null) Crumble(c);
+                        if (c != null) { Crumble(c); DropMen(h); }
                         c = new Cap { L = L, T = T, R = R, H = new double[(int)((R - L) / COL) + 1] };
                         caps[h] = c;
                     }
                     c.Seen = true;
-                    // где верх окна закрыт окнами, которые выше по порядку, снег не копится
                     for (int i = 0; i < c.H.Length; i++)
                     {
-                        int px = (int)((c.L + i * COL) * scale), py = r.T - 2;
+                        int px = (int)((c.L + i * COL) * Scale), py = r.T - 2;
                         bool covered = false;
                         foreach (Native.RECT a in above) if (px >= a.L && px < a.R && py >= a.T && py < a.B) { covered = true; break; }
                         if (covered) { if (c.H[i] > 0) Spill(c.L + i * COL, c.T, c.H[i]); c.H[i] = -1; }
@@ -497,80 +684,97 @@ namespace SnowDesk
             }, IntPtr.Zero);
             List<IntPtr> gone = new List<IntPtr>();
             foreach (KeyValuePair<IntPtr, Cap> kv in caps) if (!kv.Value.Seen) gone.Add(kv.Key);
-            foreach (IntPtr h in gone) { Crumble(caps[h]); caps.Remove(h); }
+            foreach (IntPtr h in gone) { Crumble(caps[h]); DropMen(h); caps.Remove(h); }
+        }
+
+        void DropMen(IntPtr h)
+        {
+            foreach (Man m in men) if (m.Anchor == h && double.IsNaN(m.FallY)) { m.FallY = BaseY(m); m.FallV = 0; }
+            if (rolling != null && rolling.Anchor == h) rolling = null;
         }
 
         void Spill(double x, double y, double h)
         {
-            if (h < 2 || chunks.Count > 600) return;
+            if (h < 2 || chunks.Count > 700) return;
             chunks.Add(new Chunk { X = x, Y = y - h, Vx = (rnd.NextDouble() - 0.5) * 60, Vy = -40, R = 1.5 + h * 0.18, Life = 3 });
         }
 
-        void Crumble(Cap c)  // окно сдвинули — снег осыпается
-        {
-            for (int i = 0; i < c.H.Length; i += 2)
-                if (c.H[i] > 1.5) Spill(c.L + i * COL, c.T, c.H[i]);
-        }
+        void Crumble(Cap c) { for (int i = 0; i < c.H.Length; i += 2) if (c.H[i] > 1.5) Spill(c.L + i * COL, c.T, c.H[i]); }
 
         void DropAllCaps()
         {
-            foreach (Cap c in caps.Values) Crumble(c);
+            foreach (KeyValuePair<IntPtr, Cap> kv in caps) { Crumble(kv.Value); DropMen(kv.Key); }
             caps.Clear();
         }
 
-        public void Tractor()
+        // ---------- команды из меню ----------
+        public void Tractor() { if (double.IsNaN(tractorX)) tractorX = -200; }
+
+        public void Shovel()  // лопата: убрать весь снег
         {
-            if (double.IsNaN(tractorX)) tractorX = -180;
-            DropAllCaps();
+            for (int i = 0; i < ground.Length; i += 3) if (ground[i] > 3) Spill(i * COL, groundY, ground[i] * 0.6);
+            for (int i = 0; i < ground.Length; i++) ground[i] = 0.5;
+            foreach (Cap c in caps.Values) { Crumble(c); for (int i = 0; i < c.H.Length; i++) if (c.H[i] > 0) c.H[i] = 0; }
         }
 
-        // слепить снеговика: нужен снег в сугробе
-        public string BuildSnowman()
+        public void AutoSnowman()
         {
-            if (men.Count >= 6) return "Снеговиков уже шесть — места больше нет ☃";
-            double best = -1, bestX = 0;
-            for (int t = 0; t < 40; t++)
+            double best = -1, bestX = Width / 2;
+            for (int t = 0; t < 50; t++)
             {
-                double x = 80 + rnd.NextDouble() * (width - 160);
+                double x = 90 + rnd.NextDouble() * (Width - 180);
                 bool near = false;
-                foreach (Snowman m in men) if (Math.Abs(m.X - x) < 110) near = true;
+                foreach (Man m in men) if (m.Anchor == IntPtr.Zero && Math.Abs(m.X - x) < 110) near = true;
                 if (near) continue;
                 double sum = 0;
                 for (double k = x - 120; k <= x + 120; k += COL) sum += GroundAt(k);
                 if (sum > best) { best = sum; bestX = x; }
             }
-            if (best < 600) return "Снега пока мало ❄ Подожди немного или включи «Метель»";
-            for (double k = bestX - 120; k <= bestX + 120; k += COL)
-            {
-                int j = (int)(k / COL);
-                if (j >= 0 && j < ground.Length) ground[j] *= 0.55;
-            }
-            men.Add(new Snowman { X = bestX, Scale = 0.85 + rnd.NextDouble() * 0.35, Born = time, WaveAt = time + 2.5, Hat = rnd.Next(HatColors.Length + 1), Scarf = rnd.Next(ScarfColors.Length) });
-            return null;
+            for (double k = bestX - 100; k <= bestX + 100; k += COL) { int j = (int)(k / COL); if (j >= 0 && j < ground.Length) ground[j] *= 0.6; }
+            double s = 0.85 + rnd.NextDouble() * 0.35;
+            Man m2 = new Man { X = bestX, Born = time, Hat = rnd.Next(HatColors.Length + 1), Scarf = rnd.Next(ScarfColors.Length) };
+            m2.R.Add(30 * s); m2.R.Add(22 * s); m2.R.Add(15 * s);
+            m2.DecorateAt = time + 1.9; m2.WaveAt = time + 2.6;
+            men.Add(m2);
+            if (men.Count > 12) men.RemoveAt(0);
         }
 
-        public void ClearSnowmen() { foreach (Snowman m in men) if (m.Melt == 0) m.Melt = 0.001; }
+        public void ClearSnowmen() { foreach (Man m in men) if (m.Melt == 0) m.Melt = 0.001; }
 
         // ---------- рисование ----------
-        public void Draw(DrawingContext dc)
+        public void DrawBack(DrawingContext dc)
         {
-            if (S.Garland) DrawGarland(dc);
-            // дальние снежинки
-            foreach (Flake f in flakes) if (f.Depth < 0.45) DrawFlake(dc, f);
-            if (!double.IsNaN(santaX)) DrawSanta(dc, santaX, santaY + Math.Sin(time * 2) * 8);
+            if (hidden) return;
+            if (S.Garland && !S.Over) DrawGarland(dc);
+            if (!S.Over) foreach (Flake f in flakes) DrawFlake(dc, f);
+        }
+
+        public void DrawFront(DrawingContext dc)
+        {
+            if (hidden) return;
+            if (S.Garland && S.Over) DrawGarland(dc);
+            if (S.Over) foreach (Flake f in flakes) if (f.Depth < 0.45) DrawFlake(dc, f);
+            if (!double.IsNaN(santaX)) art.DrawSanta(dc, santaX, santaY + Math.Sin(time * 2) * 7, time);
             foreach (Cap c in caps.Values) DrawCap(dc, c);
             DrawGround(dc);
-            foreach (Snowman m in men) DrawSnowman(dc, m);
-            if (!double.IsNaN(tractorX)) DrawTractor(dc, tractorX);
+            foreach (Man m in men) DrawMan(dc, m);
+            if (rolling != null) DrawBall(dc, rolling.X, SurfaceY(rolling.Anchor, rolling.X) - rolling.R[0] * 0.85, rolling.R[0], rollRot);
+            if (!double.IsNaN(tractorX)) art.DrawTractor(dc, tractorX, groundY, time);
             foreach (Chunk c in chunks) dc.DrawEllipse(glow[5], null, new Point(c.X, c.Y), c.R * 1.6, c.R * 1.6);
-            foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
+            foreach (Spark s in sparks)
+            {
+                double a = Math.Max(0, Math.Min(1, s.Life)), r = s.Max * (0.6 + 0.6 * Math.Abs(Math.Sin(s.Life * 9)));
+                dc.PushOpacity(a); dc.DrawEllipse(dust, null, new Point(s.X, s.Y), r * 2.2, r * 2.2); dc.Pop();
+            }
+            if (S.Over) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
         }
 
         void DrawFlake(DrawingContext dc, Flake f)
         {
             if (f.Crystal)
             {
-                dc.PushTransform(new MatrixTransform(Rot(f.Rot, f.R, f.X, f.Y)));
+                Matrix m = Matrix.Identity; m.Scale(f.R, f.R); m.Rotate(f.Rot); m.Translate(f.X, f.Y);
+                dc.PushTransform(new MatrixTransform(m));
                 dc.PushOpacity(0.55 + f.Depth * 0.45);
                 dc.DrawGeometry(null, crystalPen, crystalGeo);
                 dc.Pop(); dc.Pop();
@@ -583,15 +787,6 @@ namespace SnowDesk
             }
         }
 
-        static Matrix Rot(double deg, double s, double x, double y)
-        {
-            Matrix m = Matrix.Identity;
-            m.Scale(s, s);
-            m.Rotate(deg);
-            m.Translate(x, y);
-            return m;
-        }
-
         void DrawGround(DrawingContext dc)
         {
             StreamGeometry g = new StreamGeometry();
@@ -599,16 +794,14 @@ namespace SnowDesk
             {
                 c.BeginFigure(new Point(0, groundY + 2), true, true);
                 for (int i = 0; i < ground.Length; i++) c.LineTo(new Point(i * COL, groundY - ground[i] + 1), true, true);
-                c.LineTo(new Point(width, groundY + 2), true, false);
+                c.LineTo(new Point(Width, groundY + 2), true, false);
             }
             g.Freeze();
             dc.DrawGeometry(snowFill, snowEdge, g);
-            // искорки на сугробе
             for (int i = 3; i < ground.Length; i += 9)
             {
                 if (ground[i] < 4) continue;
-                double tw = Math.Sin(time * 3 + i * 1.7);
-                if (tw > 0.85) dc.DrawEllipse(glow[5], null, new Point(i * COL, groundY - ground[i] + 4), 2.2, 2.2);
+                if (Math.Sin(time * 3 + i * 1.7) > 0.85) dc.DrawEllipse(glow[5], null, new Point(i * COL, groundY - ground[i] + 4), 2.2, 2.2);
             }
         }
 
@@ -632,232 +825,328 @@ namespace SnowDesk
             }
         }
 
-        void DrawSnowman(DrawingContext dc, Snowman m)
+        double BaseY(Man m)
+        {
+            if (!double.IsNaN(m.FallY)) return m.FallY;
+            return SurfaceY(m.Anchor, m.X) + Math.Min(6, m.R[0] * 0.2);
+        }
+
+        double TopY(Man m)
+        {
+            double y = BaseY(m);
+            for (int i = 0; i < m.R.Count; i++) y -= m.R[i] * (i == 0 ? 1.6 : 1.55);
+            return y;
+        }
+
+        void DrawMan(DrawingContext dc, Man m)
         {
             double age = time - m.Born;
-            double s = m.Scale * (1 - Math.Min(1, m.Melt) * 0.9);
-            double baseY = groundY - Math.Max(0, GroundAt(m.X) - 6);
-            double r1 = 30 * s, r2 = 22 * s, r3 = 15 * s;
-            // шары накатываются по очереди
-            double p1 = Clamp(age / 0.8), p2 = Clamp((age - 0.8) / 0.6), p3 = Clamp((age - 1.4) / 0.5), p4 = Clamp((age - 1.9) / 0.5);
-            Brush body = glow[5];
-            double y1 = baseY - r1, y2 = y1 - r1 - r2 * 0.75, y3 = y2 - r2 - r3 * 0.7;
-            dc.PushOpacity(1 - Math.Min(1, m.Melt));
-            if (p1 > 0) DrawBall(dc, m.X - (1 - Ease(p1)) * 140, y1, r1 * Ease(p1));
-            if (p2 > 0) DrawBall(dc, m.X, y2 - (1 - Ease(p2)) * 60, r2 * Math.Max(0.3, Ease(p2)));
-            if (p3 > 0) DrawBall(dc, m.X, y3 - (1 - Ease(p3)) * 80, r3 * Math.Max(0.3, Ease(p3)));
-            if (p4 > 0)
+            double baseY = BaseY(m);
+            double shrink = 1 - Math.Min(1, m.Melt) * 0.9;
+            int n = m.R.Count;
+            double[] ys = new double[n], rs = new double[n];
+            double y = baseY;
+            for (int i = 0; i < n; i++)
             {
-                dc.PushOpacity(Ease(p4));
-                // руки-веточки, правая машет
-                Pen arm = new Pen(stick, 2.4 * s); arm.StartLineCap = arm.EndLineCap = PenLineCap.Round;
-                dc.DrawLine(arm, new Point(m.X - r2 * 0.8, y2), new Point(m.X - r2 * 2.0, y2 - r2 * 0.6));
-                dc.DrawLine(arm, new Point(m.X - r2 * 1.6, y2 - r2 * 0.42), new Point(m.X - r2 * 1.75, y2 - r2 * 0.85));
-                double wave = (time - m.WaveAt) < 2 ? Math.Sin((time - m.WaveAt) * 12) * 0.5 : 0;
-                double ang = -0.55 + wave;
-                Point sh = new Point(m.X + r2 * 0.8, y2);
-                Point hand = new Point(sh.X + Math.Cos(ang) * r2 * 1.35, sh.Y + Math.Sin(ang) * r2 * 1.35);
-                dc.DrawLine(arm, sh, hand);
-                // глаза, улыбка, морковка
-                dc.DrawEllipse(coal, null, new Point(m.X - r3 * 0.35, y3 - r3 * 0.2), 2.1 * s, 2.1 * s);
-                dc.DrawEllipse(coal, null, new Point(m.X + r3 * 0.35, y3 - r3 * 0.2), 2.1 * s, 2.1 * s);
-                for (int k = -2; k <= 2; k++)
-                    dc.DrawEllipse(coal, null, new Point(m.X + k * r3 * 0.2, y3 + r3 * 0.38 + Math.Abs(k) * -r3 * 0.07), 1.2 * s, 1.2 * s);
-                StreamGeometry nose = new StreamGeometry();
-                using (StreamGeometryContext c = nose.Open())
-                {
-                    c.BeginFigure(new Point(m.X, y3 - r3 * 0.05), true, true);
-                    c.LineTo(new Point(m.X + r3 * 1.2, y3 + r3 * 0.12), true, false);
-                    c.LineTo(new Point(m.X, y3 + r3 * 0.2), true, false);
-                }
-                dc.DrawGeometry(carrot, null, nose);
-                // пуговицы
-                for (int k = 0; k < 3; k++) dc.DrawEllipse(coal, null, new Point(m.X, y2 - r2 * 0.35 + k * r2 * 0.4), 1.8 * s, 1.8 * s);
-                // шарф с хвостом на ветру
-                Brush sc = new SolidColorBrush(ScarfColors[m.Scarf]);
-                dc.DrawRoundedRectangle(sc, null, new Rect(m.X - r3 * 1.05, y3 + r3 * 0.72, r3 * 2.1, 5 * s), 2.5 * s, 2.5 * s);
-                double flap = Math.Sin(time * 5 + m.X) * 3 + wind * 0.03;
-                StreamGeometry tail = new StreamGeometry();
-                using (StreamGeometryContext c = tail.Open())
-                {
-                    c.BeginFigure(new Point(m.X + r3 * 0.3, y3 + r3 * 0.8), true, true);
-                    c.LineTo(new Point(m.X + r3 * 0.7 + flap, y3 + r3 * 1.9), true, false);
-                    c.LineTo(new Point(m.X + r3 * 1.1 + flap, y3 + r3 * 1.75), true, false);
-                    c.LineTo(new Point(m.X + r3 * 0.75, y3 + r3 * 0.8), true, false);
-                }
-                dc.DrawGeometry(sc, null, tail);
-                // шапка: цилиндр или ведро (последний вариант — без шапки)
-                if (m.Hat < HatColors.Length)
-                {
-                    Brush hb = new SolidColorBrush(HatColors[m.Hat]);
-                    if (m.Hat % 2 == 0)
-                    {
-                        dc.DrawRoundedRectangle(hb, null, new Rect(m.X - r3 * 1.05, y3 - r3 * 0.95, r3 * 2.1, 3.5 * s), 1.5, 1.5);
-                        dc.DrawRectangle(hb, null, new Rect(m.X - r3 * 0.68, y3 - r3 * 2.0, r3 * 1.36, r3 * 1.1));
-                        dc.DrawRectangle(new SolidColorBrush(ScarfColors[(m.Scarf + 2) % ScarfColors.Length]), null, new Rect(m.X - r3 * 0.68, y3 - r3 * 1.2, r3 * 1.36, 3 * s));
-                    }
-                    else
-                    {
-                        StreamGeometry b = new StreamGeometry();
-                        using (StreamGeometryContext c = b.Open())
-                        {
-                            c.BeginFigure(new Point(m.X - r3 * 0.95, y3 - r3 * 0.7), true, true);
-                            c.LineTo(new Point(m.X - r3 * 0.6, y3 - r3 * 1.75), true, false);
-                            c.LineTo(new Point(m.X + r3 * 0.6, y3 - r3 * 1.75), true, false);
-                            c.LineTo(new Point(m.X + r3 * 0.95, y3 - r3 * 0.7), true, false);
-                        }
-                        dc.DrawGeometry(hb, null, b);
-                        dc.DrawEllipse(glow[5], null, new Point(m.X, y3 - r3 * 1.9), r3 * 0.35, r3 * 0.35);
-                    }
-                }
+                rs[i] = m.R[i] * shrink;
+                y -= rs[i] * (i == 0 ? 0.95 : 0.8);
+                ys[i] = y;
+                y -= rs[i] * 0.8;
+            }
+            dc.PushOpacity(1 - Math.Min(1, m.Melt));
+            for (int i = 0; i < n; i++)
+            {
+                double pr = m.Born < 0 ? 1 : Clamp((age - (i == 0 ? 0 : i == 1 ? 0.8 : 1.4)) / (i == 0 ? 0.8 : 0.6));
+                if (pr <= 0) continue;
+                double ox = i == 0 ? -(1 - Ease(pr)) * 140 : 0, oy = i == 0 ? 0 : -(1 - Ease(pr)) * 70;
+                DrawBall(dc, m.X + ox, ys[i] + oy, rs[i] * (i == 0 ? Ease(pr) : Math.Max(0.3, Ease(pr))), m.X * 3);
+            }
+            if (m.Decorated)
+            {
+                double pop = Ease(Clamp((time - m.DecorateAt) / 0.5));
+                dc.PushOpacity(pop);
+                DrawDecor(dc, m, ys, rs);
                 dc.Pop();
             }
             dc.Pop();
         }
 
-        void DrawBall(DrawingContext dc, double x, double y, double r)
+        void DrawDecor(DrawingContext dc, Man m, double[] ys, double[] rs)
         {
+            int n = rs.Length;
+            double hx = m.X, hy = ys[n - 1], hr = rs[n - 1];
+            double by = ys[n - 2], br = rs[n - 2];
+            double s = hr / 15.0;
+            // руки-веточки, правая машет
+            Pen arm = new Pen(stick, 2.6 * s); arm.StartLineCap = arm.EndLineCap = PenLineCap.Round;
+            double ay = by - br * 0.15;
+            dc.DrawLine(arm, new Point(m.X - br * 0.8, ay), new Point(m.X - br * 1.9, ay - br * 0.65));
+            dc.DrawLine(arm, new Point(m.X - br * 1.55, ay - br * 0.45), new Point(m.X - br * 1.7, ay - br * 0.9));
+            double wave = (time - m.WaveAt) < 2 && time > m.WaveAt ? Math.Sin((time - m.WaveAt) * 12) * 0.5 : 0;
+            double ang = -0.6 + wave;
+            Point sh = new Point(m.X + br * 0.8, ay);
+            Point hand = new Point(sh.X + Math.Cos(ang) * br * 1.3, sh.Y + Math.Sin(ang) * br * 1.3);
+            dc.DrawLine(arm, sh, hand);
+            Point twig = new Point(sh.X + Math.Cos(ang) * br * 0.9, sh.Y + Math.Sin(ang) * br * 0.9);
+            dc.DrawLine(arm, twig, new Point(twig.X + Math.Cos(ang - 0.8) * br * 0.35, twig.Y + Math.Sin(ang - 0.8) * br * 0.35));
+            // пуговицы
+            for (int k = 0; k < 3; k++) dc.DrawEllipse(coal, null, new Point(m.X, by - br * 0.45 + k * br * 0.42), 1.9 * s, 1.9 * s);
+            // лицо: глаза с бликом, улыбка из угольков, морковка, румянец
+            dc.DrawEllipse(coal, null, new Point(hx - hr * 0.36, hy - hr * 0.2), 2.2 * s, 2.4 * s);
+            dc.DrawEllipse(coal, null, new Point(hx + hr * 0.36, hy - hr * 0.2), 2.2 * s, 2.4 * s);
+            dc.DrawEllipse(Brushes.White, null, new Point(hx - hr * 0.33, hy - hr * 0.26), 0.7 * s, 0.7 * s);
+            dc.DrawEllipse(Brushes.White, null, new Point(hx + hr * 0.39, hy - hr * 0.26), 0.7 * s, 0.7 * s);
+            Brush blush = new SolidColorBrush(Color.FromArgb(90, 255, 120, 140));
+            dc.DrawEllipse(blush, null, new Point(hx - hr * 0.55, hy + hr * 0.15), 3 * s, 2 * s);
+            dc.DrawEllipse(blush, null, new Point(hx + hr * 0.55, hy + hr * 0.15), 3 * s, 2 * s);
+            for (int k = -2; k <= 2; k++)
+                dc.DrawEllipse(coal, null, new Point(hx + k * hr * 0.2, hy + hr * 0.42 - Math.Abs(k) * hr * 0.08), 1.25 * s, 1.25 * s);
+            StreamGeometry nose = new StreamGeometry();
+            using (StreamGeometryContext c = nose.Open())
+            {
+                c.BeginFigure(new Point(hx, hy - hr * 0.08), true, true);
+                c.BezierTo(new Point(hx + hr * 0.6, hy - hr * 0.02), new Point(hx + hr * 1.0, hy + hr * 0.08), new Point(hx + hr * 1.25, hy + hr * 0.15), true, false);
+                c.BezierTo(new Point(hx + hr * 0.9, hy + hr * 0.2), new Point(hx + hr * 0.4, hy + hr * 0.24), new Point(hx, hy + hr * 0.2), true, false);
+            }
+            dc.DrawGeometry(carrot, null, nose);
+            // шарф с хвостом на ветру
+            Color scc = ScarfColors[m.Scarf];
+            Brush sc = new LinearGradientBrush(scc, Color.FromRgb((byte)(scc.R * 0.7), (byte)(scc.G * 0.7), (byte)(scc.B * 0.7)), 90);
+            double ny = hy + hr * 0.78;
+            dc.DrawRoundedRectangle(sc, null, new Rect(m.X - hr * 1.0, ny - 3 * s, hr * 2.0, 6 * s), 3 * s, 3 * s);
+            double flap = Math.Sin(time * 5 + m.X) * 3 * s + wind * 0.04;
+            StreamGeometry tail = new StreamGeometry();
+            using (StreamGeometryContext c = tail.Open())
+            {
+                c.BeginFigure(new Point(m.X - hr * 0.5, ny), true, true);
+                c.BezierTo(new Point(m.X - hr * 0.6 + flap, ny + hr * 0.6), new Point(m.X - hr * 0.7 + flap, ny + hr * 0.9), new Point(m.X - hr * 0.75 + flap * 1.4, ny + hr * 1.25), true, false);
+                c.LineTo(new Point(m.X - hr * 0.3 + flap * 1.4, ny + hr * 1.2), true, false);
+                c.BezierTo(new Point(m.X - hr * 0.3 + flap, ny + hr * 0.8), new Point(m.X - hr * 0.2, ny + hr * 0.4), new Point(m.X - hr * 0.15, ny), true, false);
+            }
+            dc.DrawGeometry(sc, null, tail);
+            // шапка
+            if (m.Hat < HatColors.Length)
+            {
+                Color hc = HatColors[m.Hat];
+                Brush hb = new LinearGradientBrush(Color.FromRgb((byte)Math.Min(255, hc.R + 40), (byte)Math.Min(255, hc.G + 40), (byte)Math.Min(255, hc.B + 40)), hc, 90);
+                double ty = hy - hr * 0.8;
+                if (m.Hat % 2 == 0)  // цилиндр с лентой
+                {
+                    dc.DrawRoundedRectangle(hb, null, new Rect(hx - hr * 1.05, ty - 2 * s, hr * 2.1, 4 * s), 2 * s, 2 * s);
+                    dc.DrawRoundedRectangle(hb, null, new Rect(hx - hr * 0.66, ty - hr * 1.1, hr * 1.32, hr * 1.1), 2 * s, 2 * s);
+                    dc.DrawRectangle(new SolidColorBrush(ScarfColors[(m.Scarf + 2) % ScarfColors.Length]), null, new Rect(hx - hr * 0.66, ty - hr * 0.35, hr * 1.32, 3.2 * s));
+                }
+                else  // шапка с помпоном
+                {
+                    StreamGeometry b = new StreamGeometry();
+                    using (StreamGeometryContext c = b.Open())
+                    {
+                        c.BeginFigure(new Point(hx - hr * 0.95, ty + hr * 0.15), true, true);
+                        c.BezierTo(new Point(hx - hr * 0.95, ty - hr * 0.9), new Point(hx + hr * 0.95, ty - hr * 0.9), new Point(hx + hr * 0.95, ty + hr * 0.15), true, false);
+                    }
+                    dc.DrawGeometry(hb, null, b);
+                    dc.DrawRoundedRectangle(Brushes.White, null, new Rect(hx - hr * 1.0, ty, hr * 2.0, 4.5 * s), 2.2 * s, 2.2 * s);
+                    DrawBall(dc, hx, ty - hr * 0.72, hr * 0.28, 0);
+                }
+            }
+        }
+
+        void DrawBall(DrawingContext dc, double x, double y, double r, double rot)
+        {
+            if (r < 0.5) return;
             RadialGradientBrush b = new RadialGradientBrush();
             b.GradientOrigin = new Point(0.35, 0.3);
             b.Center = new Point(0.45, 0.4);
             b.GradientStops.Add(new GradientStop(Color.FromRgb(255, 255, 255), 0));
-            b.GradientStops.Add(new GradientStop(Color.FromRgb(232, 240, 250), 0.6));
-            b.GradientStops.Add(new GradientStop(Color.FromRgb(196, 214, 236), 1));
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(234, 242, 251), 0.6));
+            b.GradientStops.Add(new GradientStop(Color.FromRgb(192, 211, 235), 1));
             dc.DrawEllipse(b, snowEdge, new Point(x, y), r, r);
-        }
-
-        void DrawTractor(DrawingContext dc, double x)
-        {
-            double y = groundY - 4;
-            Brush orange = new SolidColorBrush(Color.FromRgb(245, 140, 30));
-            Brush dark = new SolidColorBrush(Color.FromRgb(40, 40, 46));
-            Brush glass = new SolidColorBrush(Color.FromArgb(220, 150, 210, 250));
-            // кузов и кабина
-            dc.DrawRoundedRectangle(orange, null, new Rect(x, y - 42, 78, 26), 5, 5);
-            dc.DrawRoundedRectangle(orange, null, new Rect(x + 8, y - 74, 36, 34), 4, 4);
-            dc.DrawRoundedRectangle(glass, null, new Rect(x + 13, y - 69, 26, 20), 3, 3);
-            dc.DrawRectangle(dark, null, new Rect(x + 56, y - 56, 5, 16));
-            // мигалка
-            bool on = ((int)(time * 6)) % 2 == 0;
-            dc.DrawEllipse(on ? new SolidColorBrush(Color.FromRgb(255, 210, 40)) : new SolidColorBrush(Color.FromRgb(170, 120, 20)), null, new Point(x + 26, y - 78), 5, 4);
-            if (on) dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb(150, 255, 210, 60), Color.FromArgb(0, 255, 210, 60)), null, new Point(x + 26, y - 78), 26, 26);
-            // колёса
-            double spin = time * 400;
-            DrawWheel(dc, x + 18, y - 14, 16, spin);
-            DrawWheel(dc, x + 64, y - 10, 10, spin * 1.6);
-            // отвал
-            Brush steel = new LinearGradientBrush(Color.FromRgb(210, 215, 225), Color.FromRgb(140, 150, 165), 0);
-            dc.DrawRectangle(dark, null, new Rect(x + 76, y - 30, 10, 5));
-            dc.DrawRoundedRectangle(steel, null, new Rect(x + 84, y - 38, 9, 36), 3, 3);
-        }
-
-        void DrawWheel(DrawingContext dc, double cx, double cy, double r, double deg)
-        {
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(30, 30, 34)), null, new Point(cx, cy), r, r);
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(250, 200, 60)), null, new Point(cx, cy), r * 0.45, r * 0.45);
-            Pen p = new Pen(new SolidColorBrush(Color.FromRgb(60, 60, 66)), 2);
-            for (int k = 0; k < 4; k++)
+            // фактура снега — крутится, когда шар катится
+            Brush tex = new SolidColorBrush(Color.FromArgb(70, 170, 195, 225));
+            for (int k = 0; k < 5; k++)
             {
-                double a = (deg + k * 90) * Math.PI / 180;
-                dc.DrawLine(p, new Point(cx + Math.Cos(a) * r * 0.55, cy + Math.Sin(a) * r * 0.55), new Point(cx + Math.Cos(a) * r * 0.95, cy + Math.Sin(a) * r * 0.95));
+                double a = (rot + k * 72) * Math.PI / 180, d = r * (0.35 + 0.1 * (k % 3));
+                dc.DrawEllipse(tex, null, new Point(x + Math.Cos(a) * d, y + Math.Sin(a) * d), r * 0.09, r * 0.07);
             }
-        }
-
-        void DrawSanta(DrawingContext dc, double x, double y)
-        {
-            Brush brown = new SolidColorBrush(Color.FromRgb(140, 90, 50));
-            Brush red = new SolidColorBrush(Color.FromRgb(210, 40, 45));
-            Brush gold = new SolidColorBrush(Color.FromRgb(240, 190, 60));
-            Pen leg = new Pen(brown, 2.2); leg.StartLineCap = leg.EndLineCap = PenLineCap.Round;
-            Pen rein = new Pen(gold, 1);
-            double run = Math.Sin(time * 14);
-            // три оленя
-            for (int k = 0; k < 3; k++)
-            {
-                double dx = x + k * 52, dy = y + Math.Sin(time * 3 + k) * 3;
-                dc.DrawEllipse(brown, null, new Point(dx + 14, dy), 13, 7);
-                dc.DrawEllipse(brown, null, new Point(dx, dy - 9), 5, 4.5);
-                dc.DrawLine(leg, new Point(dx + 6, dy + 4), new Point(dx + 2 + run * 4, dy + 15));
-                dc.DrawLine(leg, new Point(dx + 22, dy + 4), new Point(dx + 26 - run * 4, dy + 15));
-                Pen ant = new Pen(new SolidColorBrush(Color.FromRgb(110, 70, 35)), 1.4);
-                dc.DrawLine(ant, new Point(dx + 1, dy - 12), new Point(dx + 5, dy - 21));
-                dc.DrawLine(ant, new Point(dx + 3, dy - 17), new Point(dx + 9, dy - 19));
-                if (k == 0)
-                {
-                    dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb(200, 255, 60, 60), Color.FromArgb(0, 255, 60, 60)), null, new Point(dx - 5, dy - 9), 9, 9);
-                    dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(255, 60, 60)), null, new Point(dx - 5, dy - 9), 2.4, 2.4);
-                }
-                dc.DrawLine(rein, new Point(dx + 26, dy - 2), new Point(dx + 52, dy - 2));
-            }
-            // сани
-            double sx = x + 160, sy = y - 6;
-            StreamGeometry sl = new StreamGeometry();
-            using (StreamGeometryContext c = sl.Open())
-            {
-                c.BeginFigure(new Point(sx, sy), true, true);
-                c.LineTo(new Point(sx + 52, sy), true, false);
-                c.LineTo(new Point(sx + 60, sy - 20), true, false);
-                c.LineTo(new Point(sx + 46, sy - 14), true, false);
-                c.LineTo(new Point(sx + 6, sy - 14), true, false);
-            }
-            dc.DrawGeometry(red, null, sl);
-            dc.DrawLine(new Pen(gold, 2), new Point(sx - 4, sy + 6), new Point(sx + 58, sy + 6));
-            dc.DrawLine(new Pen(gold, 2), new Point(sx - 4, sy + 6), new Point(sx - 8, sy + 1));
-            // Санта и мешок
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(120, 70, 40)), null, new Point(sx + 44, sy - 20), 11, 10);
-            dc.DrawEllipse(red, null, new Point(sx + 22, sy - 22), 10, 11);
-            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(255, 220, 190)), null, new Point(sx + 20, sy - 37), 6, 6);
-            dc.DrawEllipse(Brushes.White, null, new Point(sx + 18, sy - 32), 6, 4);
-            StreamGeometry hat = new StreamGeometry();
-            using (StreamGeometryContext c = hat.Open())
-            {
-                c.BeginFigure(new Point(sx + 14, sy - 41), true, true);
-                c.LineTo(new Point(sx + 26, sy - 41), true, false);
-                c.LineTo(new Point(sx + 30, sy - 51), true, false);
-            }
-            dc.DrawGeometry(red, null, hat);
-            dc.DrawEllipse(Brushes.White, null, new Point(sx + 31, sy - 51), 2.5, 2.5);
         }
 
         void DrawGarland(DrawingContext dc)
         {
-            int n = (int)(width / 70);
+            int n = (int)(Width / 70) + 1;
             Pen wire = new Pen(new SolidColorBrush(Color.FromArgb(200, 30, 60, 30)), 1.6);
             StreamGeometry g = new StreamGeometry();
             using (StreamGeometryContext c = g.Open())
             {
                 c.BeginFigure(new Point(0, 2), false, false);
-                for (int i = 0; i < n; i++)
-                {
-                    double x0 = i * 70;
-                    c.QuadraticBezierTo(new Point(x0 + 35, 26), new Point(x0 + 70, 2), true, true);
-                }
+                for (int i = 0; i < n; i++) c.QuadraticBezierTo(new Point(i * 70 + 35, 26), new Point(i * 70 + 70, 2), true, true);
             }
             dc.DrawGeometry(null, wire, g);
             for (int i = 0; i < n; i++)
-            {
                 for (int k = 1; k <= 3; k++)
                 {
-                    double t = k / 4.0, x0 = i * 70;
-                    double bx = x0 + t * 70, by = 2 * (1 - t) * (1 - t) + 2 * (1 - t) * t * 26 + t * t * 2;
-                    int ci = (i * 3 + k) % BulbColors.Length;
+                    double t = k / 4.0, bx = i * 70 + t * 70, by = 2 * (1 - t) * (1 - t) + 2 * (1 - t) * t * 26 + t * t * 2;
                     double pulse = 0.5 + 0.5 * Math.Sin(time * 2.4 + i * 1.3 + k * 2.1);
-                    Color col = BulbColors[ci];
-                    RadialGradientBrush halo = new RadialGradientBrush(Color.FromArgb((byte)(150 * pulse), col.R, col.G, col.B), Color.FromArgb(0, col.R, col.G, col.B));
-                    dc.DrawEllipse(halo, null, new Point(bx, by + 7), 14, 14);
+                    Color col = BulbColors[(i * 3 + k) % BulbColors.Length];
+                    dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb((byte)(150 * pulse), col.R, col.G, col.B), Color.FromArgb(0, col.R, col.G, col.B)), null, new Point(bx, by + 7), 14, 14);
                     dc.DrawEllipse(new SolidColorBrush(Color.FromArgb((byte)(140 + 115 * pulse), col.R, col.G, col.B)), null, new Point(bx, by + 7), 3.6, 5.2);
                 }
-            }
         }
 
         static double Clamp(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
         static double Ease(double t) { t = Clamp(t); return 1 - Math.Pow(1 - t, 3); }
     }
 
+    // ---------- картинки: Санта с оленями, трактор ----------
+    class Art
+    {
+        class Part { public Geometry G; public Brush Fill; public Pen Stroke; }
+        List<Part> deerBack = new List<Part>(), deerFront = new List<Part>(), sleigh = new List<Part>();
+        Part farLegF, farLegB, nearLegF, nearLegB, hoofF, hoofB, reins;
+        Brush noseGlow, noseRed;
+
+        static Brush V(string a, string b) { LinearGradientBrush g = new LinearGradientBrush(C(a), C(b), new Point(0, 0), new Point(0, 1)); g.Freeze(); return g; }
+        static Brush D(string a, string m, string b)
+        {
+            LinearGradientBrush g = new LinearGradientBrush(); g.StartPoint = new Point(0, 0); g.EndPoint = new Point(1, 1);
+            g.GradientStops.Add(new GradientStop(C(a), 0)); g.GradientStops.Add(new GradientStop(C(m), 0.5)); g.GradientStops.Add(new GradientStop(C(b), 1));
+            g.Freeze(); return g;
+        }
+        static Brush S(string a) { SolidColorBrush s = new SolidColorBrush(C(a)); s.Freeze(); return s; }
+        static Color C(string hex) { return (Color)ColorConverter.ConvertFromString(hex); }
+        static Pen P(Brush b, double w) { Pen p = new Pen(b, w); p.StartLineCap = p.EndLineCap = PenLineCap.Round; p.LineJoin = PenLineJoin.Round; p.Freeze(); return p; }
+        static Part F(string d, Brush fill) { Geometry g = Geometry.Parse(d); g.Freeze(); return new Part { G = g, Fill = fill }; }
+        static Part L(string d, Pen pen) { Geometry g = Geometry.Parse(d); g.Freeze(); return new Part { G = g, Stroke = pen }; }
+        static Part E(double cx, double cy, double rx, double ry, Brush fill) { Geometry g = new EllipseGeometry(new Point(cx, cy), rx, ry); g.Freeze(); return new Part { G = g, Fill = fill }; }
+        static Part R(double x, double y, double w, double h, double r, Brush fill) { Geometry g = new RectangleGeometry(new Rect(x, y, w, h), r, r); g.Freeze(); return new Part { G = g, Fill = fill }; }
+
+        public Art()
+        {
+            Brush fur = V("#b98455", "#7a4f2c"), red = V("#ff4b4b", "#b3141c"), sled = V("#e5323a", "#8e0f16");
+            Brush gold = D("#fff1a8", "#f2c14e", "#b98618"), sack = V("#a77a4a", "#6e4c2a");
+            Brush belly = new LinearGradientBrush(Color.FromArgb(0, 0x7a, 0x4f, 0x2c), Color.FromArgb(204, 0xf1, 0xdc, 0xc0), new Point(0, 0), new Point(0, 1)); belly.Freeze();
+            Brush dark = S("#5e3b1f"), leg = S("#8a5a33"), hoof = S("#2a1a10"), white = S("#ffffff");
+            farLegF = F("M30,62 C27,72 24,80 18,88 L15,90 L19,92 C26,84 32,76 36,66 Z", dark);
+            farLegB = F("M62,62 C68,70 74,77 80,82 L83,81 L82,85 C75,82 66,74 58,66 Z", dark);
+            nearLegF = F("M36,62 C34,72 30,82 24,90 L21,93 L26,94 C32,86 38,76 42,66 Z", leg);
+            nearLegB = F("M68,60 C74,68 80,74 88,78 L91,77 L90,82 C82,80 72,72 64,64 Z", leg);
+            hoofF = L("M19,92 L24,95", P(hoof, 3)); hoofB = L("M88,80 L92,82", P(hoof, 3));
+            deerBack.Add(F("M22,50 C26,38 44,34 60,36 C72,37 80,42 82,50 C83,58 76,66 64,67 L36,67 C26,66 19,60 22,50 Z", fur));
+            deerBack.Add(F("M30,60 C40,66 60,67 72,62 C70,66 64,68 56,68 L38,68 C33,67 31,64 30,60 Z", belly));
+            deerBack.Add(F("M80,44 C86,40 90,42 88,47 C86,49 83,48 81,47 Z", S("#f1dcc0")));
+            deerBack.Add(F("M27,48 C22,42 20,36 19,31 L33,31 C34,36 36,40 38,44 Z", fur));
+            deerBack.Add(F("M19,32 L15,31 C12,30 11,28 13,27 L7,27 C3,26 3,21 7,19 C13,16 21,17 26,21 C30,24 33,28 33,33 Z", fur));
+            deerBack.Add(E(5.2, 22.5, 2.8, 2.6, hoof));
+            deerBack.Add(E(17.5, 22, 1.5, 1.5, S("#1a1008")));
+            deerBack.Add(E(17.9, 21.5, 0.5, 0.5, white));
+            deerBack.Add(F("M22,18 C24,13 28,12 30,15 C28,17 25,19 22,18 Z", leg));
+            deerBack.Add(L("M21,17 C19,11 21,3 27,-3 M24,6 C19,3 17,-1 18,-5 M26,0 C30,-3 33,-3 35,-6 M22,12 C27,9 31,8 34,5", P(S("#6b4423"), 2.2)));
+            deerBack.Add(L("M27,44 C40,46 55,46 70,43", P(gold, 3)));
+            deerBack.Add(L("M24,40 C22,47 23,52 28,55", P(S("#c7262e"), 3.4)));
+            deerBack.Add(E(27, 56, 2.6, 2.6, gold)); deerBack.Add(E(33, 57, 2.2, 2.2, gold));
+            reins = L("M90,46 C120,52 150,52 186,50 C216,48 250,50 282,46 C300,44 318,62 330,70", P(gold, 1.6));
+            noseGlow = new RadialGradientBrush(Color.FromArgb(240, 255, 107, 107), Color.FromArgb(0, 255, 42, 42)); noseGlow.Freeze();
+            noseRed = S("#ff3b3b");
+
+            Brush skin = S("#ffd9be");
+            sleigh.Add(F("M86,38 C80,20 88,6 104,4 C118,3 126,14 124,30 C122,40 110,46 96,44 Z", sack));
+            sleigh.Add(L("M96,6 C98,2 104,0 108,3", P(S("#4a3018"), 2)));
+            sleigh.Add(R(104, 18, 12, 11, 2, S("#2f9e5a"))); sleigh.Add(L("M110,18 V29 M104,23 H116", P(S("#f2c14e"), 2)));
+            sleigh.Add(R(92, 14, 10, 9, 2, S("#2f7fe0"))); sleigh.Add(L("M97,14 V23", P(white, 1.6)));
+            sleigh.Add(F("M52,40 C50,22 58,12 70,12 C82,12 88,24 86,40 Z", red));
+            sleigh.Add(L("M54,40 C60,34 78,34 84,40", P(white, 5)));
+            sleigh.Add(F("M60,14 C56,26 64,32 72,32 C80,32 84,24 80,14 Z", white));
+            sleigh.Add(E(70, 10, 8, 8, skin));
+            sleigh.Add(F("M62,9 C60,20 66,26 71,26 C77,26 81,20 79,10 C76,14 66,14 62,9 Z", S("#fafafa")));
+            sleigh.Add(E(67, 8, 1.1, 1.1, S("#2a1a10"))); sleigh.Add(E(74, 8, 1.1, 1.1, S("#2a1a10")));
+            sleigh.Add(E(70.5, 11, 1.8, 1.8, S("#f2a28a")));
+            sleigh.Add(F("M61,5 C63,-6 76,-10 86,-2 C90,1 92,6 90,10 L84,4 C80,1 70,0 62,5 Z", red));
+            sleigh.Add(L("M60,6 C66,2 76,2 82,6", P(white, 4)));
+            sleigh.Add(E(90, 11, 3.4, 3.4, white));
+            sleigh.Add(L("M58,26 C50,28 44,30 40,32", P(red, 6)));
+            sleigh.Add(E(38, 33, 3, 3, white));
+            sleigh.Add(F("M30,30 C28,44 36,56 52,58 L118,58 C128,58 134,50 134,40 L134,26 C134,22 130,20 126,22 C122,30 116,34 108,34 L44,34 C38,34 34,30 30,30 Z", sled));
+            sleigh.Add(L("M34,40 C40,50 52,52 60,52 L116,52", P(gold, 2.4)));
+            sleigh.Add(L("M126,22 C122,16 126,10 132,12 C136,14 136,20 132,22", P(gold, 2.6)));
+            sleigh.Add(L("M30,68 L124,68 C134,68 140,62 140,56 M44,58 L42,68 M112,58 L114,68", P(gold, 3)));
+            sleigh.Add(L("M30,68 C20,68 14,62 18,56 C21,52 26,54 25,58", P(gold, 3)));
+        }
+
+        static void Draw(DrawingContext dc, Part p) { dc.DrawGeometry(p.Fill, p.Stroke, p.G); }
+
+        void Leg(DrawingContext dc, Part leg, Part hoof, double deg, double hx, double hy)
+        {
+            dc.PushTransform(new RotateTransform(deg, hx, hy));
+            Draw(dc, leg); if (hoof != null) Draw(dc, hoof);
+            dc.Pop();
+        }
+
+        public void DrawSanta(DrawingContext dc, double x, double y, double t)
+        {
+            dc.PushTransform(new TranslateTransform(x, y));
+            dc.PushTransform(new ScaleTransform(0.85, 0.85));
+            Draw(dc, reins);
+            double[] dy = { 0, 6, -2 };
+            for (int i = 0; i < 3; i++)
+            {
+                double ph = Math.Sin(t * 11 + i * 0.9) * 16;
+                dc.PushTransform(new TranslateTransform(i * 96, dy[i] + Math.Sin(t * 11 + i * 0.9) * 1.5));
+                Leg(dc, farLegF, null, -ph, 33, 63);
+                Leg(dc, farLegB, null, ph, 60, 63);
+                foreach (Part p in deerBack) Draw(dc, p);
+                Leg(dc, nearLegF, hoofF, ph, 39, 63);
+                Leg(dc, nearLegB, hoofB, -ph, 66, 62);
+                if (i == 0)
+                {
+                    double pulse = 9 + Math.Sin(t * 5) * 2;
+                    dc.DrawEllipse(noseGlow, null, new Point(5.2, 22.5), pulse, pulse);
+                    dc.DrawEllipse(noseRed, null, new Point(5.2, 22.5), 2.9, 2.9);
+                }
+                dc.Pop();
+            }
+            dc.PushTransform(new TranslateTransform(300, 36 + Math.Sin(t * 2.2) * 2));
+            foreach (Part p in sleigh) Draw(dc, p);
+            dc.Pop();
+            dc.Pop(); dc.Pop();
+        }
+
+        public void DrawTractor(DrawingContext dc, double x, double groundY, double t)
+        {
+            double y = groundY - 4;
+            Brush orange = new LinearGradientBrush(Color.FromRgb(255, 170, 60), Color.FromRgb(220, 110, 20), 90);
+            Brush dark = new SolidColorBrush(Color.FromRgb(40, 40, 46));
+            Brush glass = new LinearGradientBrush(Color.FromArgb(230, 190, 230, 255), Color.FromArgb(230, 110, 170, 230), 90);
+            dc.DrawRoundedRectangle(orange, null, new Rect(x, y - 42, 80, 26), 6, 6);
+            dc.DrawRoundedRectangle(orange, null, new Rect(x + 8, y - 76, 38, 36), 5, 5);
+            dc.DrawRoundedRectangle(glass, null, new Rect(x + 13, y - 71, 28, 21), 3, 3);
+            dc.DrawRectangle(dark, null, new Rect(x + 58, y - 58, 5, 18));
+            dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)), null, new Rect(x + 4, y - 40, 72, 3), 1.5, 1.5);
+            bool on = ((int)(t * 6)) % 2 == 0;
+            if (on) dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb(160, 255, 210, 60), Color.FromArgb(0, 255, 210, 60)), null, new Point(x + 27, y - 80), 28, 28);
+            dc.DrawRoundedRectangle(new SolidColorBrush(on ? Color.FromRgb(255, 215, 50) : Color.FromRgb(170, 120, 20)), null, new Rect(x + 21, y - 84, 12, 7), 3, 3);
+            double spin = t * 400;
+            Wheel(dc, x + 19, y - 15, 17, spin);
+            Wheel(dc, x + 66, y - 10, 11, spin * 1.6);
+            Brush steel = new LinearGradientBrush(Color.FromRgb(225, 230, 238), Color.FromRgb(130, 140, 155), 0);
+            dc.DrawRectangle(dark, null, new Rect(x + 78, y - 30, 12, 5));
+            dc.DrawRoundedRectangle(steel, null, new Rect(x + 88, y - 40, 9, 38), 3, 3);
+        }
+
+        void Wheel(DrawingContext dc, double cx, double cy, double r, double deg)
+        {
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(30, 30, 34)), null, new Point(cx, cy), r, r);
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(250, 200, 60)), null, new Point(cx, cy), r * 0.45, r * 0.45);
+            Pen p = new Pen(new SolidColorBrush(Color.FromRgb(70, 70, 76)), 2.4);
+            for (int k = 0; k < 6; k++)
+            {
+                double a = (deg + k * 60) * Math.PI / 180;
+                dc.DrawLine(p, new Point(cx + Math.Cos(a) * r * 0.62, cy + Math.Sin(a) * r * 0.62), new Point(cx + Math.Cos(a) * r * 0.95, cy + Math.Sin(a) * r * 0.95));
+            }
+        }
+    }
+
     static class Program
     {
         static WF.NotifyIcon tray;
-        static SnowWindow win;
 
         static SD.Icon MakeIcon()
         {
@@ -867,14 +1156,11 @@ namespace SnowDesk
                 g.SmoothingMode = SD.Drawing2D.SmoothingMode.AntiAlias;
                 using (SD.Brush bg = new SD.SolidBrush(SD.Color.FromArgb(255, 40, 120, 220))) g.FillEllipse(bg, 1, 1, 30, 30);
                 using (SD.Pen p = new SD.Pen(SD.Color.White, 2.4f))
-                {
                     for (int i = 0; i < 6; i++)
                     {
                         double a = i * Math.PI / 3;
-                        float x = 16 + (float)Math.Cos(a) * 11, y = 16 + (float)Math.Sin(a) * 11;
-                        g.DrawLine(p, 16, 16, x, y);
+                        g.DrawLine(p, 16, 16, 16 + (float)Math.Cos(a) * 11, 16 + (float)Math.Sin(a) * 11);
                     }
-                }
             }
             return SD.Icon.FromHandle(b.GetHicon());
         }
@@ -898,7 +1184,30 @@ namespace SnowDesk
         static WF.ToolStripMenuItem Item(string text, EventHandler click)
         {
             WF.ToolStripMenuItem i = new WF.ToolStripMenuItem(text);
-            i.Click += click;
+            if (click != null) i.Click += click;
+            return i;
+        }
+
+        static WF.ToolStripMenuItem Radio(string title, string[] names, Func<int> get, Action<int> set)
+        {
+            WF.ToolStripMenuItem root = new WF.ToolStripMenuItem(title);
+            WF.ToolStripMenuItem[] items = new WF.ToolStripMenuItem[names.Length];
+            for (int i = 0; i < names.Length; i++)
+            {
+                int v = i;
+                items[i] = new WF.ToolStripMenuItem(names[i]);
+                items[i].Checked = get() == i;
+                items[i].Click += delegate { set(v); for (int k = 0; k < items.Length; k++) items[k].Checked = k == v; };
+            }
+            root.DropDownItems.AddRange(items);
+            return root;
+        }
+
+        static WF.ToolStripMenuItem Check(string text, Func<bool> get, Action<bool> set)
+        {
+            WF.ToolStripMenuItem i = new WF.ToolStripMenuItem(text);
+            i.Checked = get();
+            i.Click += delegate { set(!get()); i.Checked = get(); };
             return i;
         }
 
@@ -911,52 +1220,36 @@ namespace SnowDesk
             try { Native.SetProcessDPIAware(); } catch { }
             Application app = new Application();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            win = new SnowWindow();
-            Settings S = win.S;
+            World w = new World();
+            Settings S = w.S;
+            w.Back = new Layer(w, false);
+            w.Front = new Layer(w, true);
+            w.Tip = delegate (string text) { tray.ShowBalloonTip(9000, "Снег на рабочем столе", text, WF.ToolTipIcon.Info); };
 
             WF.ContextMenuStrip menu = new WF.ContextMenuStrip();
             menu.Font = new SD.Font("Segoe UI", 10f);
-            WF.ToolStripMenuItem lvl0 = Item("Лёгкий снежок", null), lvl1 = Item("Обычный снег", null), lvl2 = Item("Метель", null);
-            WF.ToolStripMenuItem[] lv = { lvl0, lvl1, lvl2 };
-            for (int i = 0; i < 3; i++)
-            {
-                int l = i;
-                lv[i].Click += delegate { win.SetLevel(l); S.Save(); for (int k = 0; k < 3; k++) lv[k].Checked = k == l; };
-                lv[i].Checked = S.Level == i;
-            }
-            WF.ToolStripMenuItem snowMenu = new WF.ToolStripMenuItem("❄  Сила снега");
-            snowMenu.DropDownItems.AddRange(lv);
-            menu.Items.Add(snowMenu);
+            menu.Items.Add(Radio("❄  Снегопад", new string[] { "Лёгкий", "Ровный", "Метель" }, delegate { return S.Level; }, delegate (int v) { w.SetLevel(v); S.Save(); }));
+            menu.Items.Add(Radio("🌬  Ветер", new string[] { "Порывами", "Штиль", "← Влево", "Вправо →" }, delegate { return S.Wind; }, delegate (int v) { S.Wind = v; S.Save(); }));
+            menu.Items.Add(Radio("🖐  Курсор", new string[] { "Ничего не трогает", "🧤 Варежка — сметать снег", "⚪ Снежок — катать шары" }, delegate { return S.Tool; }, delegate (int v) { S.Tool = v; S.Save(); }));
             menu.Items.Add(new WF.ToolStripSeparator());
-            menu.Items.Add(Item("⛄  Слепить снеговика", delegate
+            menu.Items.Add(Item("⛄  Слепить снеговика", delegate { w.AutoSnowman(); }));
+            menu.Items.Add(Item("🧹  Лопата — убрать весь снег", delegate { w.Shovel(); }));
+            menu.Items.Add(Item("🚜  Позвать трактор", delegate { w.Tractor(); }));
+            menu.Items.Add(Item("🎅  Позвать Санту", delegate { w.CallSanta(); }));
+            menu.Items.Add(Item("☃  Убрать снеговиков", delegate { w.ClearSnowmen(); }));
+            menu.Items.Add(new WF.ToolStripSeparator());
+            menu.Items.Add(Check("💡  Гирлянда", delegate { return S.Garland; }, delegate (bool v) { S.Garland = v; S.Save(); }));
+            menu.Items.Add(Check("🪟  Сугробы на окнах", delegate { return S.Windows; }, delegate (bool v) { S.Windows = v; S.Save(); }));
+            menu.Items.Add(Check("❄  Снег поверх окон", delegate { return S.Over; }, delegate (bool v) { S.Over = v; S.Save(); }));
+            menu.Items.Add(Check("✨  Снег разлетается от мышки", delegate { return S.Mouse; }, delegate (bool v) { S.Mouse = v; S.Save(); }));
+            menu.Items.Add(Check("🦌  Санта иногда пролетает", delegate { return S.Santa; }, delegate (bool v) { S.Santa = v; S.Save(); }));
+            menu.Items.Add(new WF.ToolStripSeparator());
+            menu.Items.Add(Check("⏸  Пауза", delegate { return S.Paused; }, delegate (bool v)
             {
-                string err = win.BuildSnowman();
-                if (err != null) tray.ShowBalloonTip(3000, "Снег на рабочем столе", err, WF.ToolTipIcon.Info);
+                S.Paused = v;
+                w.Front.Visibility = w.Back.Visibility = v ? Visibility.Hidden : Visibility.Visible;
             }));
-            menu.Items.Add(Item("🚜  Вызвать трактор (убрать снег)", delegate { win.Tractor(); }));
-            menu.Items.Add(Item("🎅  Позвать Санту", delegate { win.CallSanta(); }));
-            menu.Items.Add(Item("☃  Убрать снеговиков", delegate { win.ClearSnowmen(); }));
-            menu.Items.Add(new WF.ToolStripSeparator());
-            WF.ToolStripMenuItem garland = Item("💡  Гирлянда", null); garland.Checked = S.Garland;
-            garland.Click += delegate { S.Garland = !S.Garland; garland.Checked = S.Garland; S.Save(); };
-            WF.ToolStripMenuItem mouse = Item("🖱  Снег разлетается от мышки", null); mouse.Checked = S.Mouse;
-            mouse.Click += delegate { S.Mouse = !S.Mouse; mouse.Checked = S.Mouse; S.Save(); };
-            WF.ToolStripMenuItem wins = Item("🪟  Снег на окнах", null); wins.Checked = S.Windows;
-            wins.Click += delegate { S.Windows = !S.Windows; wins.Checked = S.Windows; S.Save(); };
-            WF.ToolStripMenuItem santa = Item("🦌  Санта иногда пролетает", null); santa.Checked = S.Santa;
-            santa.Click += delegate { S.Santa = !S.Santa; santa.Checked = S.Santa; S.Save(); };
-            menu.Items.AddRange(new WF.ToolStripItem[] { garland, mouse, wins, santa });
-            menu.Items.Add(new WF.ToolStripSeparator());
-            WF.ToolStripMenuItem pause = Item("⏸  Пауза", null);
-            pause.Click += delegate
-            {
-                S.Paused = !S.Paused; pause.Checked = S.Paused;
-                win.Visibility = S.Paused ? Visibility.Hidden : Visibility.Visible;
-            };
-            WF.ToolStripMenuItem auto = Item("🚀  Запускать вместе с Windows", null); auto.Checked = AutostartOn();
-            auto.Click += delegate { Autostart(!auto.Checked); auto.Checked = AutostartOn(); };
-            menu.Items.Add(pause);
-            menu.Items.Add(auto);
+            menu.Items.Add(Check("🚀  Запускать вместе с Windows", AutostartOn, Autostart));
             menu.Items.Add(Item("✖  Выход", delegate { tray.Visible = false; app.Shutdown(); }));
 
             tray = new WF.NotifyIcon();
@@ -966,21 +1259,25 @@ namespace SnowDesk
             tray.Visible = true;
             tray.MouseClick += delegate (object o, WF.MouseEventArgs e)
             {
-                if (e.Button == WF.MouseButtons.Left)
-                {
-                    System.Reflection.MethodInfo mi = typeof(WF.NotifyIcon).GetMethod("ShowContextMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-                    if (mi != null) mi.Invoke(tray, null);
-                }
+                if (e.Button != WF.MouseButtons.Left) return;
+                System.Reflection.MethodInfo mi = typeof(WF.NotifyIcon).GetMethod("ShowContextMenu", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (mi != null) mi.Invoke(tray, null);
             };
-            win.Show();
-            tray.ShowBalloonTip(4000, "❄ Снег пошёл!", "Меню — значок снежинки у часов. Через пару минут наметёт сугробы — можно лепить снеговика ⛄", WF.ToolTipIcon.Info);
+
+            w.Back.Show();
+            w.Front.Show();
+            DispatcherTimer timer = new DispatcherTimer(DispatcherPriority.Render);
+            timer.Interval = TimeSpan.FromMilliseconds(33);
+            timer.Tick += delegate { w.Step(); };
+            timer.Start();
+            if (S.Tips)
+                tray.ShowBalloonTip(8000, "❄ Снег пошёл!", "Меню — значок снежинки у часов. Курсором можно сметать снег, а в режиме «Снежок» — катать шары и лепить снеговика ⛄", WF.ToolTipIcon.Info);
             app.Run();
             tray.Visible = false;
             GC.KeepAlive(mtx);
         }
     }
 }
-
 '@
 [IO.File]::WriteAllText("$dir\Snow.cs", $src, (New-Object Text.UTF8Encoding $true))
 Write-Host 'Собираю программу (10-20 секунд)...' -ForegroundColor Cyan
