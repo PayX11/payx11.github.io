@@ -1,0 +1,29 @@
+# TikTok (Казахстан): экономия трафика прокси.
+# Через казахстанский прокси идёт только сам TikTok (вход, лента, регион), а видео, картинки и оформление — напрямую.
+$ErrorActionPreference = 'Stop'
+$dir = "$env:LOCALAPPDATA\TikTokKZ"
+$f = "$dir\kz.json"
+if (-not (Test-Path $f)) { Write-Host 'Не нашёл настройки TikTok (Казахстан). Напиши Claude.' -ForegroundColor Red; return }
+if (-not (Test-Path "$dir\kz.full.json")) { Copy-Item $f "$dir\kz.full.json" }   # копия старых настроек для отката
+$j = Get-Content "$dir\kz.full.json" -Raw | ConvertFrom-Json
+$kz = $j.outbounds | Where-Object { $_.protocol -ne 'freedom' } | Select-Object -First 1
+$kz | Add-Member -NotePropertyName tag -NotePropertyValue 'kz' -Force
+$direct = [pscustomobject]@{ protocol = 'freedom'; tag = 'direct' }
+$heavy = @('domain:tiktokcdn.com','domain:tiktokcdn-us.com','domain:tiktokcdn-eu.com','domain:ttwstatic.com','domain:ibyteimg.com',
+  'domain:ibytedtos.com','domain:byteimg.com','domain:muscdn.com','domain:akamaized.net','keyword:webapp-prime','regexp:^v[0-9]+-.*\.tiktok\.com$')
+$new = [pscustomobject]@{
+  log = $j.log; inbounds = $j.inbounds; outbounds = @($kz, $direct)
+  routing = [pscustomobject]@{ domainStrategy = 'AsIs'; rules = @([pscustomobject]@{ type = 'field'; domain = $heavy; outboundTag = 'direct' }) }
+}
+[IO.File]::WriteAllText($f, ($new | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
+Get-Process tiktokkz-core -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process "$dir\tiktokkz-core.exe" -ArgumentList 'run','-c',$f -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$c = (& "$env:SystemRoot\System32\curl.exe" -s -m 20 -x http://127.0.0.1:10810 https://ipinfo.io/country 2>$null) -join ''
+if ($c.Trim() -eq 'KZ') { Write-Host 'Готово! TikTok по-прежнему видит Казахстан, а видео теперь грузятся мимо прокси — трафика уйдёт раз в 10 меньше.' -ForegroundColor Green }
+else {
+  Copy-Item "$dir\kz.full.json" $f -Force
+  Get-Process tiktokkz-core -ErrorAction SilentlyContinue | Stop-Process -Force
+  Write-Host "Что-то пошло не так ('$c'), вернул как было. Пришли это Claude." -ForegroundColor Yellow
+}
+Write-Host 'Если видео в TikTok перестанут грузиться — вернуть как было: Copy-Item "$env:LOCALAPPDATA\TikTokKZ\kz.full.json" "$env:LOCALAPPDATA\TikTokKZ\kz.json" -Force' -ForegroundColor DarkGray
