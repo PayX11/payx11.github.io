@@ -43,6 +43,9 @@ namespace SnowDesk
         [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT v, int s);
+        [DllImport("dwmapi.dll")] public static extern int DwmExtendFrameIntoClientArea(IntPtr h, ref MARGINS m);
+        [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
+        [StructLayout(LayoutKind.Sequential)] public struct MARGINS { public int L, R, T, B; }
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
         public static readonly IntPtr TOP = new IntPtr(-1), BOTTOM = new IntPtr(1);
@@ -69,8 +72,9 @@ namespace SnowDesk
     class Settings
     {
         public int Level = 1, Tool = 1, Wind = 0;       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
-        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true;
+        public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true, Compat = false, Fps = false;
         string path;
+        public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnowDesk"); } }
         public Settings()
         {
             string d = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnowDesk");
@@ -94,6 +98,8 @@ namespace SnowDesk
                         case "santa": Santa = v == 1; break;
                         case "over": Over = v == 1; break;
                         case "tips": Tips = v == 1; break;
+                        case "compat": Compat = v == 1; break;
+                        case "fps": Fps = v == 1; break;
                     }
                 }
             }
@@ -105,7 +111,7 @@ namespace SnowDesk
             {
                 File.WriteAllLines(path, new string[] {
                     "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0) });
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "compat=" + (Compat ? 1 : 0), "fps=" + (Fps ? 1 : 0) });
             }
             catch { }
         }
@@ -123,7 +129,8 @@ namespace SnowDesk
         public Layer(World w, bool isFront)
         {
             front = isFront;
-            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+            bool compat = w.S.Compat;
+            WindowStyle = WindowStyle.None; AllowsTransparency = compat; Background = Brushes.Transparent;
             Topmost = isFront; ShowInTaskbar = false; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
             Left = 0; Top = 0; Width = w.Width; Height = w.Height;
             V = new View(); V.W = w; V.Front = isFront; V.IsHitTestVisible = false; Content = V;
@@ -132,6 +139,15 @@ namespace SnowDesk
                 Hwnd = new WindowInteropHelper(this).Handle;
                 int ex = Native.GetWindowLong(Hwnd, -20);
                 Native.SetWindowLong(Hwnd, -20, ex | 0x20 | 0x80 | 0x80000 | 0x08000000);
+                if (!compat)
+                {
+                    // прозрачность рисует видеокарта: фон окна прозрачный, рамка DWM растянута на всё окно
+                    HwndSource hs = HwndSource.FromHwnd(Hwnd);
+                    hs.CompositionTarget.BackgroundColor = Colors.Transparent;
+                    Native.MARGINS m = new Native.MARGINS { L = -1, R = -1, T = -1, B = -1 };
+                    Native.DwmExtendFrameIntoClientArea(Hwnd, ref m);
+                    Native.SetLayeredWindowAttributes(Hwnd, 0, 255, 2);
+                }
                 PresentationSource src = PresentationSource.FromVisual(this);
                 if (src != null && src.CompositionTarget != null) w.Scale = src.CompositionTarget.TransformToDevice.M11;
                 KeepZ();
@@ -148,7 +164,7 @@ namespace SnowDesk
     {
         public Settings S = new Settings();
         public double Width, Height, Scale = 1;
-        public Layer Back, Front;
+        public Layer Front;
         public Action<string> Tip;
         Random rnd = new Random();
         List<Flake> flakes = new List<Flake>();
@@ -162,8 +178,10 @@ namespace SnowDesk
         double tractorX = double.NaN, santaX = double.NaN, santaY, nextSanta, plowPile;
         double mx = -9999, my = -9999, pmx, pmy, mSpeed;
         bool hidden, tipSnowball;
-        int tick;
-        DateTime last = DateTime.Now;
+        int tick, frames, fps;
+        DateTime last = DateTime.Now, fpsAt = DateTime.Now;
+        public double ToolShowUntil;
+        Geometry clip;
 
         // снежок, который катают курсором
         Man rolling; double rollRot, rollStill, rollCooldown;
@@ -328,7 +346,8 @@ namespace SnowDesk
             StepMen(dt);
             StepSanta(dt);
 
-            Back.V.InvalidateVisual();
+            frames++;
+            if ((now - fpsAt).TotalSeconds >= 1) { fps = frames; frames = 0; fpsAt = now; }
             Front.V.InvalidateVisual();
         }
 
@@ -631,6 +650,8 @@ namespace SnowDesk
             if (santaX < -520) { santaX = double.NaN; nextSanta = time + 420 + rnd.NextDouble() * 600; }
         }
 
+        public double Time { get { return time; } }
+
         public void CallSanta()
         {
             santaX = Width + 60;
@@ -644,7 +665,7 @@ namespace SnowDesk
             IntPtr fg = Native.GetForegroundWindow();
             Native.RECT fr;
             bool full = false;
-            if (fg != IntPtr.Zero && fg != Front.Hwnd && fg != Back.Hwnd && fg != Native.GetShellWindow() && Native.GetWindowRect(fg, out fr))
+            if (fg != IntPtr.Zero && fg != Front.Hwnd && fg != Native.GetShellWindow() && Native.GetWindowRect(fg, out fr))
             {
                 string cls = ClassOf(fg);
                 full = cls != "WorkerW" && cls != "Progman" && fr.L <= 0 && fr.T <= 0 && fr.R >= (int)(Width * Scale) && fr.B >= (int)(Height * Scale);
@@ -652,10 +673,10 @@ namespace SnowDesk
             if (full != hidden)
             {
                 hidden = full;
-                Front.Visibility = Back.Visibility = full ? Visibility.Hidden : Visibility.Visible;
+                Front.Visibility = full ? Visibility.Hidden : Visibility.Visible;
             }
-            if (!full) { Front.KeepZ(); Back.KeepZ(); }
-            if (S.Windows && !full) ScanWindows(); else if (caps.Count > 0) DropAllCaps();
+            if (!full) { Front.KeepZ(); ScanWindows(); }
+            if ((!S.Windows || full) && caps.Count > 0) DropAllCaps();
             if (S.Tips && S.Tool == 2 && !tipSnowball && Tip != null)
             {
                 tipSnowball = true;
@@ -669,15 +690,20 @@ namespace SnowDesk
         {
             foreach (Cap c in caps.Values) c.Seen = false;
             List<Native.RECT> above = new List<Native.RECT>();
+            Geometry mask = new RectangleGeometry(new Rect(0, 0, Width, Height));
             Native.EnumWindows(delegate (IntPtr h, IntPtr p)
             {
-                if (h == Front.Hwnd || h == Back.Hwnd || !Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+                if (h == Front.Hwnd || !Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
                 int cloaked;
                 if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
                 string cls = ClassOf(h);
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd") return true;
                 Native.RECT r;
                 if (Native.DwmGetWindowAttribute(h, 9, out r, 16) != 0) Native.GetWindowRect(h, out r);
+                if ((Native.GetWindowLong(h, -20) & 0x20) != 0) return true;   // прозрачные оверлеи других программ не считаем
+                if (r.R > r.L && r.B > r.T && Native.GetWindowTextLength(h) > 0)
+                    mask = Geometry.Combine(mask, new RectangleGeometry(new Rect(r.L / Scale, r.T / Scale, (r.R - r.L) / Scale, (r.B - r.T) / Scale)), GeometryCombineMode.Exclude, null);
+                if (!S.Windows) { above.Add(r); return true; }
                 if (r.R - r.L < 160 * Scale || r.B - r.T < 80 * Scale || Native.GetWindowTextLength(h) == 0) { above.Add(r); return true; }
                 double L = r.L / Scale, T = r.T / Scale, R = r.R / Scale;
                 if (T > 30 && T < groundY - 40 && L < Width && R > 0)
@@ -702,6 +728,8 @@ namespace SnowDesk
                 above.Add(r);
                 return true;
             }, IntPtr.Zero);
+            mask.Freeze();
+            clip = mask;
             List<IntPtr> gone = new List<IntPtr>();
             foreach (KeyValuePair<IntPtr, Cap> kv in caps) if (!kv.Value.Seen) gone.Add(kv.Key);
             foreach (IntPtr h in gone) { Crumble(caps[h]); DropMen(h); caps.Remove(h); }
@@ -768,18 +796,17 @@ namespace SnowDesk
         public void ClearSnowmen() { foreach (Man m in men) if (m.Melt == 0) m.Melt = 0.001; }
 
         // ---------- рисование ----------
-        public void DrawBack(DrawingContext dc)
-        {
-            if (hidden) return;
-            if (S.Garland && !S.Over) DrawGarland(dc);
-            if (!S.Over) foreach (Flake f in flakes) DrawFlake(dc, f);
-        }
+        public void DrawBack(DrawingContext dc) { }
 
         public void DrawFront(DrawingContext dc)
         {
             if (hidden) return;
-            if (S.Garland && S.Over) DrawGarland(dc);
-            if (S.Over) foreach (Flake f in flakes) if (f.Depth < 0.45) DrawFlake(dc, f);
+            bool masked = !S.Over && clip != null;
+            if (masked) dc.PushClip(clip);
+            if (S.Garland) DrawGarland(dc);
+            if (masked) foreach (Flake f in flakes) DrawFlake(dc, f);
+            else foreach (Flake f in flakes) if (f.Depth < 0.45) DrawFlake(dc, f);
+            if (masked) dc.Pop();
             if (!double.IsNaN(santaX)) art.DrawSanta(dc, santaX, santaY + Math.Sin(time * 2) * 7, time);
             foreach (Cap c in caps.Values) DrawCap(dc, c);
             DrawGround(dc);
@@ -792,9 +819,15 @@ namespace SnowDesk
                 double a = Math.Max(0, Math.Min(1, s.Life)), r = s.Max * (0.6 + 0.6 * Math.Abs(Math.Sin(s.Life * 9)));
                 dc.PushOpacity(a); dc.DrawEllipse(dust, null, new Point(s.X, s.Y), r * 2.2, r * 2.2); dc.Pop();
             }
-            if (S.Over) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
+            if (!masked) foreach (Flake f in flakes) if (f.Depth >= 0.45) DrawFlake(dc, f);
+            if (S.Fps)
+            {
+                FormattedText ft = new FormattedText("FPS " + fps + "  окон " + caps.Count, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White);
+                dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)), null, new Rect(8, 40, ft.Width + 16, ft.Height + 8), 6, 6);
+                dc.DrawText(ft, new Point(16, 44));
+            }
             // варежка / лопата / снежок у курсора, когда он рядом со снегом
-            bool near = S.Tool != 0 && rolling == null && CursorNearSnow();
+            bool near = S.Tool != 0 && rolling == null && (CursorNearSnow() || time < ToolShowUntil);
             toolFade = Math.Max(0, Math.Min(1, toolFade + (near ? 0.15 : -0.1)));
             if (toolFade > 0.01)
             {
@@ -1008,25 +1041,41 @@ namespace SnowDesk
             }
         }
 
+        Brush[] bulbHalo, bulbCore; Pen wirePen;
         void DrawGarland(DrawingContext dc)
         {
+            if (bulbHalo == null)
+            {
+                bulbHalo = new Brush[BulbColors.Length]; bulbCore = new Brush[BulbColors.Length];
+                for (int i = 0; i < BulbColors.Length; i++)
+                {
+                    Color c = BulbColors[i];
+                    bulbHalo[i] = new RadialGradientBrush(Color.FromArgb(170, c.R, c.G, c.B), Color.FromArgb(0, c.R, c.G, c.B)); bulbHalo[i].Freeze();
+                    bulbCore[i] = new SolidColorBrush(c); bulbCore[i].Freeze();
+                }
+                wirePen = new Pen(new SolidColorBrush(Color.FromArgb(200, 30, 60, 30)), 1.6); wirePen.Freeze();
+            }
             int n = (int)(Width / 70) + 1;
-            Pen wire = new Pen(new SolidColorBrush(Color.FromArgb(200, 30, 60, 30)), 1.6);
             StreamGeometry g = new StreamGeometry();
             using (StreamGeometryContext c = g.Open())
             {
                 c.BeginFigure(new Point(0, 2), false, false);
                 for (int i = 0; i < n; i++) c.QuadraticBezierTo(new Point(i * 70 + 35, 26), new Point(i * 70 + 70, 2), true, true);
             }
-            dc.DrawGeometry(null, wire, g);
+            g.Freeze();
+            dc.DrawGeometry(null, wirePen, g);
             for (int i = 0; i < n; i++)
                 for (int k = 1; k <= 3; k++)
                 {
                     double t = k / 4.0, bx = i * 70 + t * 70, by = 2 * (1 - t) * (1 - t) + 2 * (1 - t) * t * 26 + t * t * 2;
                     double pulse = 0.5 + 0.5 * Math.Sin(time * 2.4 + i * 1.3 + k * 2.1);
-                    Color col = BulbColors[(i * 3 + k) % BulbColors.Length];
-                    dc.DrawEllipse(new RadialGradientBrush(Color.FromArgb((byte)(150 * pulse), col.R, col.G, col.B), Color.FromArgb(0, col.R, col.G, col.B)), null, new Point(bx, by + 7), 14, 14);
-                    dc.DrawEllipse(new SolidColorBrush(Color.FromArgb((byte)(140 + 115 * pulse), col.R, col.G, col.B)), null, new Point(bx, by + 7), 3.6, 5.2);
+                    int ci = (i * 3 + k) % BulbColors.Length;
+                    dc.PushOpacity(0.25 + 0.75 * pulse);
+                    dc.DrawEllipse(bulbHalo[ci], null, new Point(bx, by + 7), 14, 14);
+                    dc.Pop();
+                    dc.PushOpacity(0.6 + 0.4 * pulse);
+                    dc.DrawEllipse(bulbCore[ci], null, new Point(bx, by + 7), 3.6, 5.2);
+                    dc.Pop();
                 }
         }
 
@@ -1313,7 +1362,7 @@ namespace SnowDesk
             Section(root, "СНЕГОПАД");
             Row(root, new string[] { "Лёгкий", "Ровный", "Метель" }, delegate (int i) { return S.Level == i; }, delegate (int i) { w.SetLevel(i); S.Save(); });
             Section(root, "КУРСОР");
-            Row(root, new string[] { "Не трогать", "🧤 Варежка", "⚪ Снежок", "Лопата" }, delegate (int i) { return S.Tool == i; }, delegate (int i) { S.Tool = i; S.Save(); });
+            Row(root, new string[] { "Не трогать", "🧤 Варежка", "⚪ Снежок", "Лопата" }, delegate (int i) { return S.Tool == i; }, delegate (int i) { S.Tool = i; S.Save(); w.ToolShowUntil = w.Time + 3; });
             root.Children.Add(Text("Варежка и лопата сметают снег, по которому ведёшь курсором. Снежок: веди курсор по сугробу — шар растёт, замри на секунду — шар встанет. Второй шар поставь на первый — будет снеговик.", 11, Sub, FontWeights.Normal, true));
             Section(root, "ВЕТЕР");
             Row(root, new string[] { "← Влево", "Штиль", "Порывы", "Вправо →" }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; return S.Wind == map[i]; }, delegate (int i) { int[] map = { 2, 1, 0, 3 }; S.Wind = map[i]; S.Save(); });
@@ -1333,13 +1382,15 @@ namespace SnowDesk
             opts.Children.Add(Chip("✨ Разлетается от мышки", delegate { return S.Mouse; }, delegate { S.Mouse = !S.Mouse; S.Save(); }));
             opts.Children.Add(Chip("🦌 Санта сам прилетает", delegate { return S.Santa; }, delegate { S.Santa = !S.Santa; S.Save(); }));
             opts.Children.Add(Chip("🚀 Запуск с Windows", Program.AutostartOn, delegate { Program.Autostart(!Program.AutostartOn()); }));
+            opts.Children.Add(Chip("📈 Показать FPS", delegate { return S.Fps; }, delegate { S.Fps = !S.Fps; S.Save(); }));
+            opts.Children.Add(Chip("🐢 Совместимый режим", delegate { return S.Compat; }, delegate { S.Compat = !S.Compat; S.Save(); Program.Restart(); }));
             root.Children.Add(opts);
             System.Windows.Controls.Primitives.UniformGrid bottom = new System.Windows.Controls.Primitives.UniformGrid();
             bottom.Columns = 2; bottom.Margin = new Thickness(0, 12, 0, 0);
             bottom.Children.Add(Chip("⏸ Пауза", delegate { return S.Paused; }, delegate
             {
                 S.Paused = !S.Paused;
-                w.Front.Visibility = w.Back.Visibility = S.Paused ? Visibility.Hidden : Visibility.Visible;
+                w.Front.Visibility = S.Paused ? Visibility.Hidden : Visibility.Visible;
             }));
             bottom.Children.Add(Big("Выход", delegate { quit(); }));
             root.Children.Add(bottom);
@@ -1497,18 +1548,34 @@ namespace SnowDesk
             return i;
         }
 
+        static System.Threading.Mutex mtx;
+        static bool restart;
+
+        public static void Log(Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(Settings.Dir, "error.txt"), DateTime.Now + "  " + ex + "\r\n\r\n"); } catch { }
+        }
+
+        public static void Restart()
+        {
+            restart = true;
+            tray.Visible = false;
+            Application.Current.Shutdown();
+        }
+
         [STAThread]
         public static void Main()
         {
+            AppDomain.CurrentDomain.UnhandledException += delegate (object o, UnhandledExceptionEventArgs e) { Log(e.ExceptionObject as Exception); };
             bool created;
-            System.Threading.Mutex mtx = new System.Threading.Mutex(true, "Local\\SnowDeskOnce", out created);
+            mtx = new System.Threading.Mutex(true, "Local\\SnowDeskOnce", out created);
             if (!created) return;
             try { Native.SetProcessDPIAware(); } catch { }
             Application app = new Application();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            app.DispatcherUnhandledException += delegate (object o, DispatcherUnhandledExceptionEventArgs e) { Log(e.Exception); e.Handled = true; };
             World w = new World();
             Settings S = w.S;
-            w.Back = new Layer(w, false);
             w.Front = new Layer(w, true);
             w.Tip = delegate (string text) { tray.ShowBalloonTip(9000, "Снег на рабочем столе", text, WF.ToolTipIcon.Info); };
 
@@ -1536,7 +1603,7 @@ namespace SnowDesk
             menu.Items.Add(Check("⏸  Пауза", delegate { return S.Paused; }, delegate (bool v)
             {
                 S.Paused = v;
-                w.Front.Visibility = w.Back.Visibility = v ? Visibility.Hidden : Visibility.Visible;
+                w.Front.Visibility = v ? Visibility.Hidden : Visibility.Visible;
             }));
             menu.Items.Add(Check("🚀  Запускать вместе с Windows", AutostartOn, Autostart));
             menu.Items.Add(Item("✖  Выход", delegate { tray.Visible = false; app.Shutdown(); }));
@@ -1552,17 +1619,19 @@ namespace SnowDesk
                 if (e.Button == WF.MouseButtons.Left) panel.Toggle();
             };
 
-            w.Back.Show();
             w.Front.Show();
-            DispatcherTimer timer = new DispatcherTimer(DispatcherPriority.Render);
-            timer.Interval = TimeSpan.FromMilliseconds(33);
-            timer.Tick += delegate { w.Step(); };
-            timer.Start();
+            // плавно: шаг на каждый кадр экрана
+            CompositionTarget.Rendering += delegate { try { w.Step(); } catch (Exception ex) { Log(ex); } };
             if (S.Tips)
                 tray.ShowBalloonTip(8000, "❄ Снег пошёл!", "Нажми на снежинку у часов — откроется панель: снегопад, варежка, снежки, лопата, снегоуборщик, Санта ⛄", WF.ToolTipIcon.Info);
             app.Run();
             tray.Visible = false;
             GC.KeepAlive(mtx);
+            if (restart)
+            {
+                mtx.ReleaseMutex(); mtx.Dispose();
+                System.Diagnostics.Process.Start(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            }
         }
     }
 }
