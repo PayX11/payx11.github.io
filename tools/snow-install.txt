@@ -77,7 +77,8 @@ namespace SnowDesk
     class Settings
     {
         public int Level = 1, Tool = 1, Wind = 0, Render = 0;   // Render: 0 надёжный (видеокарта), 1 надёжный (процессор), 2 быстрый
-        public bool Compat { get { return Render != 2; } }       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
+        public bool Compat { get { return Render != 2; } }
+        public bool FastFailed;       // Tool: 0 ничего, 1 варежка, 2 снежок, 3 лопата; Wind: 0 порывы, 1 штиль, 2 влево, 3 вправо
         public bool Garland = true, Mouse = true, Windows = true, Santa = true, Over = false, Paused = false, Tips = true, Fps = false;
         string path;
         public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnowDesk"); } }
@@ -105,13 +106,14 @@ namespace SnowDesk
                         case "over": Over = v == 1; break;
                         case "tips": Tips = v == 1; break;
                         case "render": Render = Math.Max(0, Math.Min(2, v)); break;
+                        case "fastfailed": FastFailed = v == 1; break;
                         case "fps": Fps = v == 1; break;
                         case "ver": ver = v; break;
                     }
                 }
             }
             catch { }
-            if (ver < 6) { Render = 0; ver = 6; Save(); }   // после проблем с кликами — всегда надёжный режим
+            if (ver < 7) { Render = FastFailed ? 0 : 2; ver = 7; Save(); }   // пробуем новый быстрый способ один раз; не пройдут клики — вернёмся сами
         }
         int ver;
         public void Save()
@@ -120,7 +122,7 @@ namespace SnowDesk
             {
                 File.WriteAllLines(path, new string[] {
                     "level=" + Level, "tool=" + Tool, "wind=" + Wind, "garland=" + (Garland ? 1 : 0), "mouse=" + (Mouse ? 1 : 0),
-                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "render=" + Render, "fps=" + (Fps ? 1 : 0), "ver=" + ver });
+                    "windows=" + (Windows ? 1 : 0), "santa=" + (Santa ? 1 : 0), "over=" + (Over ? 1 : 0), "tips=" + (Tips ? 1 : 0), "render=" + Render, "fastfailed=" + (FastFailed ? 1 : 0), "fps=" + (Fps ? 1 : 0), "ver=" + ver });
             }
             catch { }
         }
@@ -132,13 +134,78 @@ namespace SnowDesk
         protected override void OnRender(DrawingContext dc) { if (W != null) { if (Front) W.DrawFront(dc); else W.DrawBack(dc); } }
     }
 
+    abstract class Surface
+    {
+        public IntPtr Hwnd; public View V;
+        public abstract void Show();
+        public abstract void SetVisible(bool on);
+        public abstract void KeepZ();
+        public abstract void EnsureClickThrough();
+        protected static IntPtr Hook(IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled)
+        {
+            if (msg == 0x0312 && wp.ToInt32() == 7) { handled = true; Program.Quit(); }   // Ctrl+Alt+Q
+            if (msg == 0x007C && wp.ToInt32() == -20)   // WM_STYLECHANGING: оставляем «пропускать клики»
+            {
+                Native.STYLESTRUCT ss = (Native.STYLESTRUCT)Marshal.PtrToStructure(lp, typeof(Native.STYLESTRUCT));
+                ss.New |= 0x20 | 0x80 | 0x80000 | 0x08000000;
+                Marshal.StructureToPtr(ss, lp, false);
+            }
+            return IntPtr.Zero;
+        }
+    }
+
+    class WinSurface : Surface
+    {
+        Layer L;
+        public WinSurface(World w) { L = new Layer(w, true); V = L.V; L.SourceInitialized += delegate { Hwnd = L.Hwnd; }; }
+        public override void Show() { L.Show(); Hwnd = L.Hwnd; }
+        public override void SetVisible(bool on) { L.Visibility = on ? Visibility.Visible : Visibility.Hidden; }
+        public override void KeepZ() { L.KeepZ(); }
+        public override void EnsureClickThrough() { L.EnsureClickThrough(); }
+    }
+
+    // быстрое окно: создаётся сразу с «пропускать клики», прозрачность рисует видеокарта через DWM
+    class FastSurface : Surface
+    {
+        HwndSource src;
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+        public FastSurface(World w)
+        {
+            SD.Rectangle b = WF.Screen.PrimaryScreen.Bounds;
+            HwndSourceParameters p = new HwndSourceParameters("SnowDesk", b.Width, b.Height);
+            p.PositionX = b.X; p.PositionY = b.Y;
+            p.WindowStyle = unchecked((int)0x80000000);                         // WS_POPUP
+            p.ExtendedWindowStyle = 0x8 | 0x20 | 0x80 | 0x80000 | 0x08000000;  // TOPMOST, TRANSPARENT, TOOLWINDOW, LAYERED, NOACTIVATE
+            p.UsesPerPixelOpacity = false;
+            src = new HwndSource(p);
+            Hwnd = src.Handle;
+            Native.SetLayeredWindowAttributes(Hwnd, 0, 255, 2);
+            src.CompositionTarget.BackgroundColor = Colors.Transparent;
+            Native.MARGINS m = new Native.MARGINS { L = -1, R = -1, T = -1, B = -1 };
+            Native.DwmExtendFrameIntoClientArea(Hwnd, ref m);
+            w.Scale = src.CompositionTarget.TransformToDevice.M11;
+            V = new View(); V.W = w; V.Front = true; V.IsHitTestVisible = false; V.Width = w.Width; V.Height = w.Height;
+            src.RootVisual = V;
+            src.AddHook(Hook);
+            Native.RegisterHotKey(Hwnd, 7, 0x0001 | 0x0002 | 0x4000, 0x51);
+        }
+        public override void Show() { ShowWindow(Hwnd, 4); KeepZ(); }
+        public override void SetVisible(bool on) { ShowWindow(Hwnd, on ? 4 : 0); }
+        public override void KeepZ() { EnsureClickThrough(); Native.SetWindowPos(Hwnd, Native.TOP, 0, 0, 0, 0, Native.NOSIZE | Native.NOMOVE | Native.NOACTIVATE); }
+        public override void EnsureClickThrough()
+        {
+            int ex = Native.GetWindowLong(Hwnd, -20), want = ex | 0x20 | 0x80 | 0x80000 | 0x08000000;
+            if (ex != want) { Native.SetWindowLong(Hwnd, -20, want); Native.SetLayeredWindowAttributes(Hwnd, 0, 255, 2); }
+        }
+    }
+
     class Layer : Window
     {
         public IntPtr Hwnd; public View V; bool front;
         public Layer(World w, bool isFront)
         {
             front = isFront;
-            bool compat = w.S.Compat;
+            bool compat = true;
             WindowStyle = WindowStyle.None; AllowsTransparency = compat; Background = Brushes.Transparent;
             Topmost = isFront; ShowInTaskbar = false; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
             Left = 0; Top = 0; Width = w.Width; Height = w.Height;
@@ -162,7 +229,7 @@ namespace SnowDesk
                 HwndSource.FromHwnd(Hwnd).AddHook(delegate (IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled)
                 {
                     if (msg == 0x0312 && wp.ToInt32() == 7) { handled = true; Program.Quit(); }   // Ctrl+Alt+Q
-                    if (msg == 0x007C && wp.ToInt32() == -20)   // WM_STYLECHANGING: кто-то меняет стиль окна — оставляем «пропускать клики»
+                    if (msg == 0x007C && wp.ToInt32() == -20)
                     {
                         Native.STYLESTRUCT ss = (Native.STYLESTRUCT)Marshal.PtrToStructure(lp, typeof(Native.STYLESTRUCT));
                         ss.New |= 0x20 | 0x80 | 0x80000 | 0x08000000;
@@ -200,7 +267,7 @@ namespace SnowDesk
     {
         public Settings S = new Settings();
         public double Width, Height, Scale = 1;
-        public Layer Front;
+        public Surface Front;
         public Action<string> Tip;
         Random rnd = new Random();
         List<Flake> flakes = new List<Flake>();
@@ -738,9 +805,9 @@ namespace SnowDesk
             if (full != hidden)
             {
                 hidden = full;
-                Front.Visibility = full ? Visibility.Hidden : Visibility.Visible;
+                Front.SetVisible(!full);
             }
-            if (!full) { Front.KeepZ(); ScanWindows(); }
+            if (!full) { Front.KeepZ(); ScanWindows(); if (S.Render == 2) CheckClickThrough(); }
             if ((!S.Windows || full) && caps.Count > 0) DropAllCaps();
             if (S.Tips && S.Tool == 2 && !tipSnowball && Tip != null)
             {
@@ -759,8 +826,8 @@ namespace SnowDesk
             if (blockedCount >= 2)
             {
                 blockedCount = 0;
-                if (S.Render == 2) { S.Render = 0; S.Save(); Program.Restart(); }
-                else { S.Paused = true; Front.Visibility = Visibility.Hidden; if (Tip != null) Tip("Снег мешал нажимать на окна — я его приостановил. Включи снова в панели (Пауза)."); }
+                // быстрый способ на этом ПК перехватывает мышь — навсегда возвращаемся на надёжный
+                S.Render = 0; S.FastFailed = true; S.Save(); Program.Restart();
             }
         }
 
@@ -1637,7 +1704,7 @@ namespace SnowDesk
             bottom.Children.Add(Chip("⏸ Пауза", delegate { return S.Paused; }, delegate
             {
                 S.Paused = !S.Paused;
-                w.Front.Visibility = S.Paused ? Visibility.Hidden : Visibility.Visible;
+                w.Front.SetVisible(!S.Paused);
             }));
             bottom.Children.Add(Big("Выход", delegate { quit(); }));
             root.Children.Add(bottom);
@@ -1831,7 +1898,12 @@ namespace SnowDesk
             app.DispatcherUnhandledException += delegate (object o, DispatcherUnhandledExceptionEventArgs e) { Log(e.Exception); e.Handled = true; };
             World w = new World();
             Settings S = w.S;
-            w.Front = new Layer(w, true);
+            if (S.Render == 2)
+            {
+                try { w.Front = new FastSurface(w); }
+                catch (Exception ex) { Log(ex); S.Render = 0; S.FastFailed = true; S.Save(); }
+            }
+            if (w.Front == null) w.Front = new WinSurface(w);
             w.Tip = delegate (string text) { tray.ShowBalloonTip(9000, "Снег на рабочем столе", text, WF.ToolTipIcon.Info); };
 
             WF.ContextMenuStrip menu = new WF.ContextMenuStrip();
@@ -1858,7 +1930,7 @@ namespace SnowDesk
             menu.Items.Add(Check("⏸  Пауза", delegate { return S.Paused; }, delegate (bool v)
             {
                 S.Paused = v;
-                w.Front.Visibility = v ? Visibility.Hidden : Visibility.Visible;
+                w.Front.SetVisible(!v);
             }));
             menu.Items.Add(Check("🚀  Запускать вместе с Windows", AutostartOn, Autostart));
             menu.Items.Add(Item("✖  Выход", delegate { tray.Visible = false; app.Shutdown(); }));
@@ -1915,4 +1987,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 6 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
+Write-Host 'Готово! Версия 7 ❄  Панель: синяя снежинка у часов или ярлык «Снег». Аварийно выключить: Ctrl+Alt+Q.' -ForegroundColor Green
