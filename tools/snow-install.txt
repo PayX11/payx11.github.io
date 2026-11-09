@@ -45,6 +45,7 @@ namespace SnowDesk
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT v, int s);
         [DllImport("dwmapi.dll")] public static extern int DwmExtendFrameIntoClientArea(IntPtr h, ref MARGINS m);
         [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
+        [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
         [StructLayout(LayoutKind.Sequential)] public struct MARGINS { public int L, R, T, B; }
         [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
         [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
@@ -137,8 +138,7 @@ namespace SnowDesk
             SourceInitialized += delegate
             {
                 Hwnd = new WindowInteropHelper(this).Handle;
-                int ex = Native.GetWindowLong(Hwnd, -20);
-                Native.SetWindowLong(Hwnd, -20, ex | 0x20 | 0x80 | 0x80000 | 0x08000000);
+                EnsureClickThrough();
                 if (!compat)
                 {
                     // прозрачность рисует видеокарта: фон окна прозрачный, рамка DWM растянута на всё окно
@@ -151,11 +151,34 @@ namespace SnowDesk
                 PresentationSource src = PresentationSource.FromVisual(this);
                 if (src != null && src.CompositionTarget != null) w.Scale = src.CompositionTarget.TransformToDevice.M11;
                 KeepZ();
+                HwndSource.FromHwnd(Hwnd).AddHook(delegate (IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled)
+                {
+                    if (msg == 0x0084) { handled = true; return new IntPtr(-1); }   // WM_NCHITTEST → «меня тут нет»
+                    if (msg == 0x0312 && wp.ToInt32() == 7) { handled = true; Program.Quit(); }   // Ctrl+Alt+Q
+                    return IntPtr.Zero;
+                });
+                Native.RegisterHotKey(Hwnd, 7, 0x0001 | 0x0002 | 0x4000, 0x51);   // Ctrl+Alt+Q
             };
+            Loaded += delegate { EnsureClickThrough(); };
+            ContentRendered += delegate { EnsureClickThrough(); };
         }
+        // окно должно пропускать клики: WS_EX_TRANSPARENT | WS_EX_LAYERED | TOOLWINDOW | NOACTIVATE
+        public void EnsureClickThrough()
+        {
+            if (Hwnd == IntPtr.Zero) return;
+            int ex = Native.GetWindowLong(Hwnd, -20);
+            int want = ex | 0x20 | 0x80 | 0x80000 | 0x08000000;
+            if (ex != want)
+            {
+                Native.SetWindowLong(Hwnd, -20, want);
+                if (!AllowsTransparency) Native.SetLayeredWindowAttributes(Hwnd, 0, 255, 2);
+            }
+        }
+
         public void KeepZ()
         {
             if (Hwnd == IntPtr.Zero) return;
+            EnsureClickThrough();
             Native.SetWindowPos(Hwnd, front ? Native.TOP : Native.BOTTOM, 0, 0, 0, 0, Native.NOSIZE | Native.NOMOVE | Native.NOACTIVATE);
         }
     }
@@ -316,6 +339,7 @@ namespace SnowDesk
             time += dt; Clock.Now = time;
             tick++;
             if (tick % 30 == 1) Housekeeping();
+            if (tick % 10 == 0) Front.EnsureClickThrough();
             if (hidden) return;
 
             // ветер
@@ -1556,6 +1580,12 @@ namespace SnowDesk
             try { File.AppendAllText(Path.Combine(Settings.Dir, "error.txt"), DateTime.Now + "  " + ex + "\r\n\r\n"); } catch { }
         }
 
+        public static void Quit()
+        {
+            tray.Visible = false;
+            Application.Current.Shutdown();
+        }
+
         public static void Restart()
         {
             restart = true;
@@ -1648,4 +1678,4 @@ catch { Write-Host "Не собралось: $($_.Exception.Message)" -Foregroun
 $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Снег.lnk')
 $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.Save()
 Start-Process $exe
-Write-Host 'Готово! Версия 3. Снег пошёл ❄  Панель — синяя снежинка у часов (в стрелочке ^). Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
+Write-Host 'Готово! Версия 3.1. Аварийно выключить снег: Ctrl+Alt+Q. Снег пошёл ❄  Панель — синяя снежинка у часов (в стрелочке ^). Ярлык «Снег» на рабочем столе.' -ForegroundColor Green
