@@ -65,6 +65,8 @@ details{background:var(--card);border:1px solid var(--line);border-radius:16px;p
 summary{cursor:pointer;font-weight:700}
 details p{color:var(--sub);line-height:1.55;margin:10px 0 0;font-weight:500}
 .cta{text-align:center;background:linear-gradient(135deg,rgba(95,184,255,.18),rgba(59,140,255,.08));border:1px solid rgba(95,184,255,.3);border-radius:26px;padding:40px 18px;margin-top:20px}
+.vid{max-width:380px;margin:0 auto;border-radius:24px;overflow:hidden;border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.45);background:#000}
+.vid video{display:block;width:100%;height:auto}
 footer{padding:50px 0 40px;text-align:center;color:var(--sub);font-size:13px;line-height:1.7}
 footer a{color:#bfe2ff}
 @media (max-width:600px){.navlinks a:not(.tgl){display:none}.btn{width:100%;justify-content:center}}
@@ -75,7 +77,7 @@ footer a{color:#bfe2ff}
 <div class="wrap">
 <nav>
   <a class="logo" href="#"><img src="icon.png" alt="">SNOW FOR YOU</a>
-  <div class="navlinks"><a href="#features">Возможности</a><a href="#install">Установка</a><a class="tgl" href="https://t.me/PayPasX" target="_blank" rel="noopener">💬 Поддержка</a></div>
+  <div class="navlinks"><a href="#video">Видео</a><a href="#features">Возможности</a><a href="#install">Установка</a><a class="tgl" href="https://t.me/PayPasX" target="_blank" rel="noopener">💬 Поддержка</a></div>
 </nav>
 
 <div class="hero">
@@ -89,6 +91,12 @@ footer a{color:#bfe2ff}
   <div class="note">Без рекламы и регистрации. Программа сама обновляется.</div>
   <div class="shot"><img src="hero.jpg" alt="Снег на рабочем столе Windows: Санта с оленями, снеговик и снегоуборочная машина" width="1600" height="900"></div>
 </div>
+
+<section id="video">
+  <h2>Как это работает</h2>
+  <p class="h2sub">Минута — и всё понятно: установка, снеговик, варежка, настройки</p>
+  <div class="vid"><video controls playsinline preload="none" poster="video-poster.jpg" width="720" height="1280"><source src="video.mp4" type="video/mp4">Твой браузер не показывает видео — <a href="video.mp4">скачай его</a>.</video></div>
+</section>
 
 <section id="features">
   <h2>Что умеет</h2>
