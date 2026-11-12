@@ -1,3 +1,3 @@
-1.12
-https://payx11.github.io/snow/SnowForYou.exe
-b68b77f5116a0effc1780e21dec8d40e07995f67398aa0da437b08629a9ebbdd
+2.0.11
+https://payx11.github.io/snow/SnowForYou-Setup-2.0.11.exe
+83857a1b2c919b2d22adc6d54f2898db0c16fd79aa32eb81a1a80967e1d37a20
